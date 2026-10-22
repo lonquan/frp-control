@@ -60,7 +60,7 @@ func NewHTTP2HTTPSPlugin(pluginCtx PluginContext, options v1.ClientPluginOptions
 	if captures := trafficcapture.GetDefault(); captures != nil {
 		handler = captures.WrapHTTPHandler(pluginCtx.Name, "http", "https", opts.LocalAddr, rp)
 	}
-	p.httpBridgePlugin = newHTTPBridgePluginServer(handler, false)
+	p.httpBridgePlugin = newHTTPBridgePluginServer(handler, true)
 
 	return p, nil
 }

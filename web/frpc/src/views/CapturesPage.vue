@@ -7,82 +7,40 @@
     >
       <a-button :loading="loading" @click="load">
         <template #icon><IconRefresh /></template>
-        刷新
-      </a-button>
-      <a-button
-        type="primary"
-        :disabled="selectedRowKeys.length === 0"
-        @click="replaySelected"
-      >
-        <template #icon><IconPlayArrow /></template>
-        重放所选
+        刷新列表
       </a-button>
     </PageHeader>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div class="panel-title">
-          <strong>捕获设置</strong>
-          <span>默认关闭，明文落盘，TTL 与容量自动清理</span>
+    <section class="panel capture-toolbar-panel">
+      <div class="capture-toolbar">
+        <div class="capture-toolbar-main">
+          <StatusBadge
+            :status="settings.enabled ? 'enabled' : 'closed'"
+            :label="settings.enabled ? '捕获已启用' : '捕获已关闭'"
+          />
+          <div class="capture-summary-list" aria-label="捕获设置摘要">
+            <span><strong>{{ settings.proxies.length }}</strong> 个代理</span>
+            <span>保留 <strong>{{ formatHours(settings.ttlSeconds) }}</strong> 小时</span>
+            <span>单条 <strong>{{ formatMiB(settings.maxEntryBytes) }}</strong> MiB</span>
+            <span><strong>{{ settings.excludePatterns.length }}</strong> 条排除规则</span>
+          </div>
         </div>
-        <a-switch v-model="settings.enabled" @change="saveSettings" />
+        <a-button @click="openSettings">
+          <template #icon><IconSettings /></template>
+          配置
+        </a-button>
       </div>
-      <div class="panel-body capture-settings">
-        <div class="capture-setting-row">
-          <div>
-            <strong>启用代理</strong>
-            <span>仅对选中的 HTTP/HTTPS2HTTP 代理生效</span>
-          </div>
-          <a-select
-            v-model="settings.proxies"
-            multiple
-            placeholder="请选择代理"
-            allow-clear
-            class="proxy-select"
-            @change="saveSettings"
-          >
-            <a-option v-for="proxy in proxyNames" :key="proxy" :value="proxy">
-              {{ proxy }}
-            </a-option>
-          </a-select>
-        </div>
-        <div class="capture-setting-row">
-          <div>
-            <strong>保留时间</strong>
-            <span>超时记录在下次读写时自动删除</span>
-          </div>
-          <a-input-number
-            v-model="ttlHours"
-            :min="1"
-            :max="720"
-            :step="1"
-            @change="saveSettings"
-          >
-            <template #suffix>小时</template>
-          </a-input-number>
-        </div>
-        <div class="capture-setting-row">
-          <div>
-            <strong>单条上限</strong>
-            <span>请求或响应过大时标记为截断，不可重放</span>
-          </div>
-          <a-input-number
-            v-model="maxEntryMiB"
-            :min="1"
-            :max="512"
-            :step="1"
-            @change="saveSettings"
-          >
-            <template #suffix>MiB</template>
-          </a-input-number>
-        </div>
-        <a-alert type="warning" :show-icon="true">
-          捕获包含完整 Authorization、Cookie 和正文，数据以明文保存在宿主机 data 目录。总容量固定为 500 MiB。
-        </a-alert>
-      </div>
+      <a-alert type="warning" :show-icon="true" class="capture-warning">
+        捕获保存完整 Authorization、Cookie 和正文；数据以明文保存在宿主机，总容量固定为 500 MiB。
+      </a-alert>
     </section>
 
-    <a-form :model="filters" class="filter-panel" layout="vertical" @submit="load">
+    <a-form
+      :model="filters"
+      class="filter-panel capture-filter-form"
+      layout="vertical"
+      @submit="load"
+    >
       <div class="filter-grid">
         <a-form-item label="搜索">
           <a-input v-model="filters.q" placeholder="Host、Path" allow-clear>
@@ -103,7 +61,7 @@
             </a-option>
           </a-select>
         </a-form-item>
-        <div class="filter-actions">
+        <div class="filter-actions capture-filter-actions">
           <a-button type="primary" html-type="submit">查询</a-button>
           <a-button @click="resetFilters">重置</a-button>
         </div>
@@ -111,106 +69,250 @@
     </a-form>
 
     <section class="table-panel">
-      <div class="table-toolbar">
+      <div class="table-toolbar compact-toolbar">
         <div class="table-toolbar-copy">
           <strong>捕获记录</strong>
-          <span>敏感请求头不在列表中显示</span>
+          <span>{{ records.length }} 条 · 敏感请求头默认隐藏</span>
         </div>
-        <a-tag color="orange">列表已隐藏敏感信息</a-tag>
+        <a-tag color="orange">明文存储</a-tag>
       </div>
       <a-table
-        v-model:selected-keys="selectedRowKeys"
         :data="records"
         :loading="loading"
         :pagination="false"
         row-key="id"
-        size="large"
-        :row-selection="{ type: 'checkbox', showCheckedAll: true }"
-        :scroll="{ x: 1120 }"
+        size="small"
+        :scroll="{ x: compactTable ? 720 : 900 }"
         @row-click="openDetail"
       >
         <template #columns>
-          <a-table-column title="请求" :width="280">
+          <a-table-column title="请求" :width="compactTable ? 230 : 260">
             <template #cell="{ record }">
-              <div class="row-primary">
-                <strong>{{ record.method }} {{ record.host }}</strong>
+              <div class="row-primary request-row">
+                <div class="request-title">
+                  <strong>{{ record.method }} {{ record.host }}</strong>
+                  <a-tag v-if="record.webSocket" color="purple" size="small">WSS</a-tag>
+                  <a-tag v-if="record.truncated" color="orange" size="small">截断</a-tag>
+                </div>
                 <span>{{ record.path || '/' }}</span>
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="协议" :width="95">
+          <a-table-column title="来源地址" :width="compactTable ? 140 : 155">
             <template #cell="{ record }">
-              <a-tag>{{ record.protocol.toUpperCase() }}</a-tag>
+              <span class="mono source-address">{{ sourceLabel(record) }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="代理" data-index="proxy" :width="140" />
-          <a-table-column title="状态" :width="90">
+          <a-table-column title="代理 / 协议" :width="compactTable ? 110 : 125">
             <template #cell="{ record }">
-              <a-tag :color="record.responseStatus >= 400 ? 'red' : 'green'">
-                {{ record.responseStatus || '-' }}
-              </a-tag>
+              <div class="row-primary compact-primary">
+                <strong>{{ record.proxy }}</strong>
+                <span>{{ record.protocol.toUpperCase() }}</span>
+              </div>
             </template>
           </a-table-column>
-          <a-table-column title="耗时" :width="100">
-            <template #cell="{ record }">{{ record.durationMs }} ms</template>
-          </a-table-column>
-          <a-table-column title="大小" :width="100">
-            <template #cell="{ record }">{{ formatBytes(record.size) }}</template>
-          </a-table-column>
-          <a-table-column title="特征" :width="150">
+          <a-table-column title="结果" :width="compactTable ? 150 : 165">
             <template #cell="{ record }">
-              <a-space>
-                <a-tag v-if="record.webSocket" color="purple">WSS</a-tag>
-                <a-tag v-if="record.truncated" color="orange">截断</a-tag>
-                <span v-if="!record.webSocket && !record.truncated">完整</span>
-              </a-space>
+              <div class="result-cell">
+                <a-tag :color="responseColor(record.responseStatus)" size="small">
+                  {{ record.responseStatus || '-' }}
+                </a-tag>
+                <span>{{ record.durationMs }} ms · {{ formatBytes(record.size) }}</span>
+              </div>
             </template>
           </a-table-column>
-          <a-table-column title="时间" :width="190">
+          <a-table-column v-if="!compactTable" title="时间" :width="155">
             <template #cell="{ record }">{{ formatDate(record.startedAt) }}</template>
           </a-table-column>
-          <a-table-column title="操作" :width="130" fixed="right">
+          <a-table-column title="操作" :width="64" fixed="right" align="center">
             <template #cell="{ record }">
-              <a-space>
-                <a-button type="text" @click.stop="openDetail(record)">详情</a-button>
-                <a-popconfirm content="确认删除此捕获记录？" @ok="remove(record.id)">
-                  <a-button type="text" status="danger" @click.stop>删除</a-button>
-                </a-popconfirm>
-              </a-space>
+              <a-dropdown
+                trigger="click"
+                position="br"
+                @click.stop
+              >
+                <a-button
+                  type="text"
+                  class="row-more-button"
+                  :aria-label="`${record.method} ${record.host} 的操作`"
+                >
+                  <IconMore />
+                </a-button>
+                <template #content>
+                  <a-doption @click="openDetail(record)">详情</a-doption>
+                  <a-doption
+                    :disabled="!canReplay(record)"
+                    @click="startReplay(record, 'list')"
+                  >
+                    重放
+                  </a-doption>
+                  <a-doption class="danger-option" @click="confirmRemove(record)">
+                    删除
+                  </a-doption>
+                </template>
+              </a-dropdown>
             </template>
           </a-table-column>
         </template>
         <template #empty>
-          <div class="empty-state">
+          <div class="empty-state compact-empty">
             <div class="empty-icon"><IconFile /></div>
             <strong>暂无捕获记录</strong>
-            <p>选择 HTTP 或 HTTPS2HTTP 代理并启用捕获后，请求会出现在这里。</p>
+            <p>启用捕获后，未被排除规则匹配的 HTTP 请求会出现在这里。</p>
           </div>
         </template>
       </a-table>
     </section>
 
     <a-drawer
+      v-model:visible="settingsVisible"
+      title="捕获设置"
+      :width="560"
+      :on-before-cancel="confirmDiscardSettings"
+      unmount-on-close
+    >
+      <a-form :model="settingsDraft" layout="vertical" class="settings-form">
+        <a-form-item label="启用捕获">
+          <div class="settings-switch-row">
+            <a-switch v-model="settingsDraft.enabled" aria-label="启用流量捕获" />
+            <span>{{ settingsDraft.enabled ? '捕获开启后立即生效' : '当前不会记录新请求' }}</span>
+          </div>
+        </a-form-item>
+        <a-form-item
+          label="启用代理"
+          :validate-status="settingsDraft.enabled && settingsDraft.proxies.length === 0 ? 'error' : undefined"
+          :help="settingsDraft.enabled && settingsDraft.proxies.length === 0 ? '启用捕获时至少选择一个代理' : undefined"
+        >
+          <a-select
+            v-model="settingsDraft.proxies"
+            multiple
+            placeholder="请选择 HTTP 或 HTTPS2HTTP 代理"
+            allow-clear
+          >
+            <a-option v-for="proxy in proxyNames" :key="proxy" :value="proxy">
+              {{ proxy }}
+            </a-option>
+          </a-select>
+          <template #extra>仅对选中的 HTTP/HTTPS2HTTP 代理生效。</template>
+        </a-form-item>
+        <div class="settings-grid">
+          <a-form-item label="保留时间">
+            <a-input-number
+              v-model="settingsDraft.ttlHours"
+              :min="1"
+              :max="720"
+              :step="1"
+            >
+              <template #suffix>小时</template>
+            </a-input-number>
+            <template #extra>超时记录在下次读写时清理。</template>
+          </a-form-item>
+          <a-form-item label="单条上限">
+            <a-input-number
+              v-model="settingsDraft.maxEntryMiB"
+              :min="1"
+              :max="512"
+              :step="1"
+            >
+              <template #suffix>MiB</template>
+            </a-input-number>
+            <template #extra>超过上限时标记为截断，不能重放。</template>
+          </a-form-item>
+        </div>
+        <a-form-item label="排除关键字">
+          <a-textarea
+            v-model="settingsDraft.excludeText"
+            :auto-size="{ minRows: 6, maxRows: 12 }"
+            :max-length="maxExcludeTextLength"
+            show-word-limit
+            placeholder="favicon.ico&#10;/static/*&#10;/healthz"
+          />
+          <template #extra>
+            每行一条，匹配 Path 和 Query，不区分大小写。支持 * 和 ? 通配符；最多 {{ maxExcludePatterns }} 条。
+          </template>
+        </a-form-item>
+        <a-alert type="warning" :show-icon="true">
+          设置保存后立即生效，无需重启服务。排除规则只影响之后的新请求。
+        </a-alert>
+      </a-form>
+      <template #footer>
+        <a-space>
+          <a-button @click="requestCloseSettings">取消</a-button>
+          <a-button :disabled="!settingsDirty" @click="resetSettingsDraft">
+            放弃更改
+          </a-button>
+          <a-button
+            type="primary"
+            :loading="settingsSaving"
+            :disabled="!settingsDirty"
+            @click="saveSettings"
+          >
+            保存设置
+          </a-button>
+        </a-space>
+      </template>
+    </a-drawer>
+
+    <a-drawer
       v-model:visible="detailVisible"
       title="捕获详情"
-      :width="860"
+      :width="920"
+      :footer="false"
       unmount-on-close
     >
       <div v-if="detail" class="detail-sections">
-        <div class="capture-summary">
+        <div class="capture-detail-summary">
           <div class="capture-url">
-            <a-tag :color="detail.responseStatus >= 400 ? 'red' : 'green'">
-              {{ detail.responseStatus }}
+            <a-tag :color="responseColor(detail.responseStatus)">
+              {{ detail.responseStatus || '-' }}
             </a-tag>
             <strong>{{ detail.method }}</strong>
             <span class="mono">{{ displayURL(detail) }}</span>
           </div>
-          <a-button size="small" @click="toggleSensitive">
-            {{ sensitiveVisible ? '隐藏敏感内容' : '显示敏感内容' }}
-          </a-button>
+          <a-space wrap>
+            <a-button :loading="detailLoading" @click="refreshDetail()">
+              <template #icon><IconRefresh /></template>
+              刷新
+            </a-button>
+            <a-button @click="toggleSensitive">
+              {{ sensitiveVisible ? '隐藏敏感内容' : '显示敏感内容' }}
+            </a-button>
+            <a-button
+              type="primary"
+              :loading="replayingID === detail.id"
+              :disabled="!canReplay(detail)"
+              @click="startReplay(detail, 'detail')"
+            >
+              <template #icon><IconPlayArrow /></template>
+              重放请求
+            </a-button>
+          </a-space>
         </div>
 
-        <a-tabs default-active-key="request">
+        <div class="capture-meta">
+          <div>
+            <span>来源地址</span>
+            <strong class="mono">{{ detail.sourceAddr || '-' }}</strong>
+          </div>
+          <div>
+            <span>来源端口</span>
+            <strong class="mono">{{ detail.sourcePort || '-' }}</strong>
+          </div>
+          <div>
+            <span>代理</span>
+            <strong>{{ detail.proxy }}</strong>
+          </div>
+          <div>
+            <span>耗时</span>
+            <strong>{{ detail.durationMs }} ms</strong>
+          </div>
+          <div>
+            <span>捕获时间</span>
+            <strong>{{ formatDate(detail.startedAt) }}</strong>
+          </div>
+        </div>
+
+        <a-tabs v-model:active-key="activeTab">
           <a-tab-pane key="request" title="请求">
             <h3 class="capture-section-title">请求头</h3>
             <pre class="code-block">{{ formatHeaders(detail.requestHeaders, sensitiveVisible) }}</pre>
@@ -241,21 +343,58 @@
               </div>
             </div>
           </a-tab-pane>
-          <a-tab-pane key="replay" title="重放结果">
-            <a-empty v-if="!detail.replayResults?.length" description="尚未重放" />
-            <div v-else class="ws-frame-list">
-              <div
+          <a-tab-pane
+            key="replay"
+            :title="`重放记录${detail.replayResults?.length ? ` (${detail.replayResults.length})` : ''}`"
+          >
+            <a-alert type="info" :show-icon="false" class="replay-help">
+              每次重放都会发送到原代理后端。以下展示原始响应与最近 20 次重放结果的差异。
+            </a-alert>
+            <a-empty v-if="!detail.replayResults?.length" description="尚未重放此请求" />
+            <div v-else class="replay-list">
+              <article
                 v-for="(result, index) in detail.replayResults"
-                :key="index"
-                class="validation-item"
-                :class="result.error ? 'error' : 'success'"
+                :key="`${result.startedAt}-${index}`"
+                class="replay-attempt"
               >
-                <strong>{{ result.error || `HTTP ${result.status}` }}</strong>
-                <span> · {{ result.durationMs }} ms · {{ formatDate(result.startedAt) }}</span>
-                <pre v-if="result.responseBody" class="code-block replay-body">{{
-                  formatBody(result.responseBody)
-                }}</pre>
-              </div>
+                <div class="replay-attempt-head">
+                  <strong>第 {{ index + 1 }} 次重放</strong>
+                  <span>{{ formatDate(result.startedAt) }}</span>
+                </div>
+                <div class="replay-compare">
+                  <section class="replay-column">
+                    <h4>原始响应</h4>
+                    <div class="result-cell">
+                      <a-tag :color="responseColor(detail.responseStatus)" size="small">
+                        {{ detail.responseStatus || '-' }}
+                      </a-tag>
+                      <span>{{ detail.durationMs }} ms · {{ formatBytes(captureBodySize(detail)) }}</span>
+                    </div>
+                    <details v-if="detail.responseBody" class="response-details">
+                      <summary>查看原始响应正文</summary>
+                      <pre class="code-block replay-body">{{ formatBody(detail.responseBody) }}</pre>
+                    </details>
+                  </section>
+                  <section class="replay-column" :class="{ failed: !!result.error }">
+                    <h4>本次重放</h4>
+                    <div class="result-cell">
+                      <a-tag
+                        v-if="!result.error"
+                        :color="responseColor(result.status)"
+                        size="small"
+                      >
+                        {{ result.status || '-' }}
+                      </a-tag>
+                      <strong v-else class="replay-error">{{ result.error }}</strong>
+                      <span>{{ result.durationMs }} ms</span>
+                    </div>
+                    <details v-if="result.responseBody" class="response-details">
+                      <summary>查看重放响应正文</summary>
+                      <pre class="code-block replay-body">{{ formatBody(result.responseBody) }}</pre>
+                    </details>
+                  </section>
+                </div>
+              </article>
             </div>
           </a-tab-pane>
         </a-tabs>
@@ -265,13 +404,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import { Message, Modal } from '@arco-design/web-vue'
 import {
   IconFile,
+  IconMore,
   IconPlayArrow,
   IconRefresh,
   IconSearch,
+  IconSettings,
 } from '@arco-design/web-vue/es/icon'
 import {
   adminAPI,
@@ -282,72 +424,193 @@ import {
   type WebSocketFrame,
 } from '@shared/admin'
 import PageHeader from '@shared/components/PageHeader.vue'
+import StatusBadge from '@shared/components/StatusBadge.vue'
 
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+const maxExcludePatterns = 100
+const maxExcludePatternLength = 256
+const maxExcludeTextLength = maxExcludePatterns * (maxExcludePatternLength + 1)
+
 const loading = ref(false)
+const compactTable = useMediaQuery('(max-width: 1100px)')
 const records = ref<CaptureListItem[]>([])
-const selectedRowKeys = ref<string[]>([])
 const proxyNames = ref<string[]>([])
 const detailVisible = ref(false)
 const detail = ref<CaptureRecord>()
+const detailLoading = ref(false)
+const activeTab = ref('request')
 const sensitiveVisible = ref(false)
-const settings = reactive<CaptureSettings>({
+const replayingID = ref('')
+const settingsVisible = ref(false)
+const settingsSaving = ref(false)
+const settings = ref<CaptureSettings>(emptySettings())
+const settingsDraft = reactive({
   enabled: false,
-  proxies: [],
-  ttlSeconds: 86400,
-  maxEntryBytes: 16 * 1024 * 1024,
-  maxTotalBytes: 500 * 1024 * 1024,
+  proxies: [] as string[],
+  ttlHours: 24,
+  maxEntryMiB: 16,
+  excludeText: '',
 })
 const filters = reactive({ q: '', proxy: '', method: '' })
 
-const ttlHours = ref(24)
-const maxEntryMiB = ref(16)
+const settingsDirty = computed(() => {
+  const draft = buildDraftSettings(false)
+  const saved = settings.value
+  return (
+    draft.enabled !== saved.enabled ||
+    !sameStringArray(draft.proxies, saved.proxies) ||
+    draft.ttlSeconds !== saved.ttlSeconds ||
+    draft.maxEntryBytes !== saved.maxEntryBytes ||
+    !sameStringArray(draft.excludePatterns, saved.excludePatterns)
+  )
+})
 
 onMounted(async () => {
   await Promise.all([loadProxies(), loadSettings(), load()])
 })
+
+function emptySettings(): CaptureSettings {
+  return {
+    enabled: false,
+    proxies: [],
+    excludePatterns: [],
+    ttlSeconds: 86400,
+    maxEntryBytes: 16 * 1024 * 1024,
+    maxTotalBytes: 500 * 1024 * 1024,
+  }
+}
 
 async function loadProxies() {
   try {
     const status = await legacyRequest<Record<string, Array<{ name: string; type: string }>>>(
       '/api/status',
     )
-    proxyNames.value = Object.values(status)
+    const names = Object.values(status)
       .flat()
       .filter((proxy) => ['http', 'https'].includes(proxy.type))
       .map((proxy) => proxy.name)
-      .sort()
+    proxyNames.value = [...new Set([...names, ...settings.value.proxies])].sort()
   } catch {
-    proxyNames.value = []
+    proxyNames.value = [...settings.value.proxies]
   }
 }
 
 async function loadSettings() {
   try {
     const value = await adminAPI.captureSettings()
-    Object.assign(settings, value)
-    ttlHours.value = Math.max(1, Math.round(value.ttlSeconds / 3600))
-    maxEntryMiB.value = Math.max(
-      1,
-      Math.round(value.maxEntryBytes / 1024 / 1024),
-    )
+    settings.value = normalizeSettings(value)
+    proxyNames.value = [...new Set([...proxyNames.value, ...settings.value.proxies])].sort()
+    if (!settingsVisible.value) {
+      resetSettingsDraft()
+    }
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '读取捕获设置失败')
   }
 }
 
+function normalizeSettings(value: CaptureSettings): CaptureSettings {
+  return {
+    ...emptySettings(),
+    ...value,
+    proxies: Array.isArray(value.proxies) ? [...value.proxies] : [],
+    excludePatterns: Array.isArray(value.excludePatterns)
+      ? [...value.excludePatterns]
+      : [],
+  }
+}
+
+function openSettings() {
+  resetSettingsDraft()
+  settingsVisible.value = true
+}
+
+function resetSettingsDraft() {
+  Object.assign(settingsDraft, {
+    enabled: settings.value.enabled,
+    proxies: [...settings.value.proxies],
+    ttlHours: Math.max(1, Math.round(settings.value.ttlSeconds / 3600)),
+    maxEntryMiB: Math.max(1, Math.round(settings.value.maxEntryBytes / 1024 / 1024)),
+    excludeText: settings.value.excludePatterns.join('\n'),
+  })
+}
+
+function parseExcludeText(text: string) {
+  const seen = new Set<string>()
+  const patterns: string[] = []
+  for (const raw of text.split(/\r?\n/)) {
+    const pattern = raw.trim()
+    if (!pattern) continue
+    const key = pattern.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    patterns.push(pattern)
+  }
+  return patterns
+}
+
+function buildDraftSettings(validate: boolean): CaptureSettings {
+  const excludePatterns = parseExcludeText(settingsDraft.excludeText)
+  if (validate) {
+    if (settingsDraft.enabled && settingsDraft.proxies.length === 0) {
+      throw new Error('启用捕获时至少选择一个代理')
+    }
+    if (excludePatterns.length > maxExcludePatterns) {
+      throw new Error(`排除关键字最多支持 ${maxExcludePatterns} 条`)
+    }
+    if (excludePatterns.some((pattern) => [...pattern].length > maxExcludePatternLength)) {
+      throw new Error(`排除关键字单条不能超过 ${maxExcludePatternLength} 个字符`)
+    }
+  }
+  return {
+    enabled: settingsDraft.enabled,
+    proxies: [...settingsDraft.proxies],
+    excludePatterns,
+    ttlSeconds: Math.max(1, Number(settingsDraft.ttlHours || 24)) * 3600,
+    maxEntryBytes:
+      Math.max(1, Number(settingsDraft.maxEntryMiB || 16)) * 1024 * 1024,
+    maxTotalBytes: 500 * 1024 * 1024,
+  }
+}
+
 async function saveSettings() {
+  let payload: CaptureSettings
   try {
-    settings.ttlSeconds = Math.max(1, Number(ttlHours.value || 24)) * 3600
-    settings.maxEntryBytes = Math.max(
-      1,
-      Number(maxEntryMiB.value || 16),
-    ) * 1024 * 1024
-    settings.maxTotalBytes = 500 * 1024 * 1024
-    Object.assign(settings, await adminAPI.saveCaptureSettings(settings))
-    Message.success('捕获设置已保存')
+    payload = buildDraftSettings(true)
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '检查捕获设置失败')
+    return
+  }
+  settingsSaving.value = true
+  try {
+    settings.value = normalizeSettings(await adminAPI.saveCaptureSettings(payload))
+    settingsVisible.value = false
+    Message.success('捕获设置已保存并生效，无需重启服务')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '保存捕获设置失败')
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
+function confirmDiscardSettings() {
+  if (!settingsDirty.value) {
+    return true
+  }
+  Modal.confirm({
+    title: '放弃未保存的设置？',
+    content: '关闭后，本次修改的捕获代理、保留时间和排除规则不会生效。',
+    okText: '放弃更改',
+    okButtonProps: { status: 'danger' },
+    onOk: () => {
+      settingsVisible.value = false
+    },
+  })
+  return false
+}
+
+function requestCloseSettings() {
+  if (confirmDiscardSettings()) {
+    settingsVisible.value = false
   }
 }
 
@@ -388,7 +651,9 @@ async function toggleSensitive() {
 async function openDetail(record: any) {
   const item = record as CaptureListItem
   try {
-    detail.value = await adminAPI.capture(item.id)
+    const value = await adminAPI.capture(item.id)
+    detail.value = value
+    activeTab.value = 'request'
     sensitiveVisible.value = false
     detailVisible.value = true
   } catch (error) {
@@ -396,38 +661,74 @@ async function openDetail(record: any) {
   }
 }
 
-function replaySelected() {
-  const selected = records.value.filter((record) =>
-    selectedRowKeys.value.includes(record.id),
-  )
-  const unsafe = selected.some(
-    (record) => !['GET', 'HEAD', 'OPTIONS'].includes(record.method),
-  )
+async function refreshDetail(id = detail.value?.id) {
+  if (!id) return false
+  detailLoading.value = true
+  try {
+    const value = await adminAPI.capture(id)
+    if (detail.value?.id === id) {
+      detail.value = value
+    }
+    return true
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '刷新捕获详情失败')
+    return false
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function canReplay(record: Pick<CaptureListItem, 'webSocket' | 'truncated'>) {
+  return !record.webSocket && !record.truncated
+}
+
+function startReplay(
+  record: CaptureListItem,
+  source: 'list' | 'detail',
+) {
+  if (!canReplay(record)) {
+    Message.warning(record.webSocket ? 'WebSocket 消息帧不支持重放' : '截断记录不能重放')
+    return
+  }
+  const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(record.method)
   Modal.confirm({
     title: unsafe ? '重放修改性请求' : '重放捕获请求',
     content: unsafe
-      ? '所选记录包含非幂等请求，重放可能修改后端数据。确认继续？'
-      : `确认重放 ${selected.length} 条请求到原代理后端？`,
+      ? `将重放 ${record.method} ${record.host}${record.path || '/'}，可能修改后端数据。确认继续？`
+      : `确认重放 ${record.method} ${record.host}${record.path || '/'} 到原代理后端？`,
     okText: '确认重放',
     okButtonProps: unsafe ? { status: 'danger' } : {},
     onOk: async () => {
+      replayingID.value = record.id
       try {
-        const results = await adminAPI.replayCaptures(
-          selectedRowKeys.value,
-          1,
-          200,
-        )
-        const failed = results.filter((item) => item.result.error)
-        if (failed.length) {
-          Message.warning(`${results.length - failed.length} 条成功，${failed.length} 条失败`)
+        const [response] = await adminAPI.replayCaptures([record.id], 1, 0)
+        if (source === 'list') {
+          await load()
         } else {
-          Message.success(`${results.length} 条请求重放完成`)
+          await refreshDetail(record.id)
         }
-        selectedRowKeys.value = []
-        await load()
+        if (response?.result.error) {
+          Message.error(`重放失败：${response.result.error}`)
+        } else {
+          Message.success(`重放完成：HTTP ${response?.result.status || '-'}`)
+        }
       } catch (error) {
         Message.error(error instanceof Error ? error.message : '重放失败')
+      } finally {
+        replayingID.value = ''
       }
+    },
+  })
+}
+
+function confirmRemove(record: CaptureListItem) {
+  Modal.confirm({
+    title: '删除捕获记录',
+    content: `确认删除 ${record.method} ${record.host}${record.path || '/'}？`,
+    okText: '删除',
+    okButtonProps: { status: 'danger' },
+    onOk: async () => {
+      await remove(record.id)
     },
   })
 }
@@ -464,7 +765,9 @@ function formatBody(body?: string) {
   if (!body) return '无'
   try {
     const decoded = atob(body)
-    if (decoded.length > 200_000) return `${decoded.slice(0, 200_000)}\n\n[内容已截断显示]`
+    if (decoded.length > 200_000) {
+      return `${decoded.slice(0, 200_000)}\n\n[内容已截断显示]`
+    }
     return decoded
   } catch {
     return body
@@ -491,11 +794,54 @@ function displayURL(record: CaptureRecord) {
   return `${record.protocol}://${record.host}${record.path || '/'}${query ? `?${query}` : ''}`
 }
 
+function sourceLabel(record: Pick<CaptureListItem, 'sourceAddr' | 'sourcePort'>) {
+  if (!record.sourceAddr) return '-'
+  const address = record.sourceAddr.includes(':')
+    ? `[${record.sourceAddr}]`
+    : record.sourceAddr
+  return record.sourcePort ? `${address}:${record.sourcePort}` : address
+}
+
+function responseColor(status: number) {
+  if (!status) return 'gray'
+  if (status >= 500) return 'red'
+  if (status >= 400) return 'orange'
+  return 'green'
+}
+
 function formatBytes(bytes: number) {
   if (!bytes) return '0 B'
   const units = ['B', 'KB', 'MB']
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  const index = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+  )
   return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+
+function captureBodySize(record: CaptureRecord) {
+  return (
+    base64Length(record.requestBody) +
+    base64Length(record.responseBody)
+  )
+}
+
+function base64Length(value?: string) {
+  if (!value) return 0
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding)
+}
+
+function formatHours(seconds: number) {
+  return Math.max(1, Math.round(seconds / 3600))
+}
+
+function formatMiB(bytes: number) {
+  return Math.max(1, Math.round(bytes / 1024 / 1024))
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function formatDate(value?: string) {
@@ -508,46 +854,130 @@ function formatDate(value?: string) {
 </script>
 
 <style scoped>
-.capture-settings {
-  display: grid;
-  gap: 18px;
+.capture-toolbar-panel {
+  overflow: hidden;
 }
 
-.capture-setting-row {
+.capture-toolbar {
   display: flex;
+  min-height: 64px;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: 18px;
+  padding: 12px 18px;
 }
 
-.capture-setting-row > div:first-child {
+.capture-toolbar-main {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
 }
 
-.capture-setting-row strong {
+.capture-summary-list {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--frp-muted);
+  font-size: 12px;
+}
+
+.capture-summary-list strong {
   color: var(--frp-text);
-  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
-.capture-setting-row span {
+.capture-warning {
+  border-radius: 0;
+}
+
+.capture-filter-form .filter-grid {
+  grid-template-columns: minmax(260px, 1.6fr) repeat(2, minmax(160px, 0.7fr));
+}
+
+.capture-filter-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  padding-bottom: 16px;
+}
+
+.compact-toolbar {
+  min-height: 52px;
+}
+
+.request-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.request-title strong {
+  min-width: 0;
+}
+
+.source-address {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-primary {
+  gap: 1px;
+}
+
+.result-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   color: var(--frp-muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-.proxy-select {
-  width: min(480px, 60%);
+.row-more-button {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
 }
 
-.capture-summary {
+.compact-empty {
+  min-height: 180px;
+}
+
+.settings-form :deep(.arco-form-item) {
+  margin-bottom: 20px;
+}
+
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--frp-muted);
+  font-size: 12px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.capture-detail-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
   border: 1px solid var(--frp-border);
-  border-radius: 11px;
-  padding: 13px;
+  border-radius: 12px;
+  padding: 14px;
   background: var(--frp-surface-muted);
 }
 
@@ -564,13 +994,42 @@ function formatDate(value?: string) {
   white-space: nowrap;
 }
 
+.capture-meta {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.capture-meta > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--frp-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--frp-surface-muted);
+}
+
+.capture-meta span {
+  color: var(--frp-muted);
+  font-size: 11px;
+}
+
+.capture-meta strong {
+  overflow-wrap: anywhere;
+  color: var(--frp-text);
+  font-size: 12px;
+}
+
 .capture-section-title {
   margin: 20px 0 9px;
   color: var(--frp-text);
   font-size: 13px;
 }
 
-.ws-frame-list {
+.ws-frame-list,
+.replay-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -579,13 +1038,124 @@ function formatDate(value?: string) {
 .ws-frame-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 7px;
   color: var(--frp-muted);
   font-size: 11px;
 }
 
+.replay-help {
+  margin-bottom: 14px;
+}
+
+.replay-attempt {
+  overflow: hidden;
+  border: 1px solid var(--frp-border);
+  border-radius: 12px;
+  background: var(--frp-surface);
+}
+
+.replay-attempt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--frp-border);
+  background: var(--frp-surface-muted);
+  color: var(--frp-muted);
+  font-size: 11px;
+}
+
+.replay-attempt-head strong {
+  color: var(--frp-text);
+  font-size: 12px;
+}
+
+.replay-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.replay-column {
+  min-width: 0;
+  padding: 13px;
+}
+
+.replay-column + .replay-column {
+  border-left: 1px solid var(--frp-border);
+}
+
+.replay-column.failed {
+  background: rgb(var(--danger-1));
+}
+
+.replay-column h4 {
+  margin: 0 0 8px;
+  color: var(--frp-text);
+  font-size: 12px;
+}
+
+.replay-error {
+  overflow-wrap: anywhere;
+  color: rgb(var(--danger-7));
+  font-size: 12px;
+}
+
+.response-details {
+  margin-top: 10px;
+}
+
+.response-details summary {
+  color: var(--frp-role-strong);
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .replay-body {
   margin: 8px 0 0;
+}
+
+@media (max-width: 1024px) {
+  .capture-filter-form .filter-grid {
+    grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(130px, 0.7fr));
+  }
+
+  .capture-filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .capture-meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .capture-detail-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .capture-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .capture-toolbar > :deep(.arco-btn) {
+    align-self: flex-start;
+  }
+
+  .capture-filter-form .filter-grid,
+  .settings-grid,
+  .capture-meta,
+  .replay-compare {
+    grid-template-columns: 1fr;
+  }
+
+  .replay-column + .replay-column {
+    border-top: 1px solid var(--frp-border);
+    border-left: 0;
+  }
 }
 </style>

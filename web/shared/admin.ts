@@ -373,6 +373,7 @@ export type CertificateInput = Omit<
 export interface CaptureSettings {
   enabled: boolean
   proxies: string[]
+  excludePatterns: string[]
   ttlSeconds: number
   maxEntryBytes: number
   maxTotalBytes: number
@@ -385,6 +386,8 @@ export interface CaptureListItem {
   method: string
   host: string
   path: string
+  sourceAddr?: string
+  sourcePort?: number
   responseStatus: number
   startedAt: string
   durationMs: number

@@ -267,7 +267,7 @@
             </div>
           </div>
         </div>
-        <a-alert v-if="selected.lastError" type="error" :show-icon="true">
+        <a-alert v-if="selected.lastError" type="error" :show-icon="false">
           {{ selected.lastError }}
         </a-alert>
       </div>

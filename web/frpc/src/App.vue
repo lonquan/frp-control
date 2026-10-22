@@ -38,7 +38,6 @@ const navItems = [
   { path: '/config', label: '配置', icon: IconApps },
   { path: '/certificates', label: '证书', icon: IconSafe },
   { path: '/captures', label: '流量捕获', icon: IconFile },
-  { path: '/diagnostics', label: '监控诊断', icon: IconDashboard },
   { path: '/settings', label: '设置', icon: IconSettings },
 ]
 

@@ -309,6 +309,10 @@ html.dark .role-client {
   gap: 3px;
 }
 
+.detail-item > .status-badge {
+  align-self: flex-start;
+}
+
 .detail-item span {
   color: var(--frp-muted);
   font-size: 11px;

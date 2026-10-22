@@ -69,3 +69,24 @@ func TestManagerListPurgesExpiredCaptures(t *testing.T) {
 	_, err = os.Stat(path)
 	require.True(t, os.IsNotExist(err), "expired capture should be removed during listing")
 }
+
+func TestManagerPersistsExcludePatterns(t *testing.T) {
+	dataDir := t.TempDir()
+	manager, err := NewManager(dataDir)
+	require.NoError(t, err)
+	require.NoError(t, manager.SaveSettings(Settings{
+		Enabled:         true,
+		Proxies:         []string{"web"},
+		ExcludePatterns: []string{" favicon.ico ", "FAVICON.ICO", "/static/*"},
+		TTLSeconds:      3600,
+		MaxEntryBytes:   1024,
+		MaxTotalBytes:   4096,
+	}))
+
+	reloaded, err := NewManager(dataDir)
+	require.NoError(t, err)
+	require.Equal(t, []string{"favicon.ico", "/static/*"}, reloaded.Settings().ExcludePatterns)
+	require.True(t, reloaded.Excluded("/assets/favicon.ico", ""))
+	require.True(t, reloaded.Excluded("/static/js/app.js", "v=1"))
+	require.False(t, reloaded.Excluded("/api/items", ""))
+}

@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,7 +34,14 @@ func (m *Manager) WrapHTTPHandler(proxy, protocol, scheme, target string, next h
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sourceAddr, sourcePort := sourceFromRemoteAddr(r.RemoteAddr)
 		if !m.Enabled(proxy) {
+			setForwardedFor(r, sourceAddr)
+			next.ServeHTTP(w, r)
+			return
+		}
+		if m.Excluded(r.URL.Path, r.URL.RawQuery) {
+			setForwardedFor(r, sourceAddr)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -55,6 +64,9 @@ func (m *Manager) WrapHTTPHandler(proxy, protocol, scheme, target string, next h
 			requestBody,
 			requestTruncated,
 		)
+		capture.SourceAddr = sourceAddr
+		capture.SourcePort = sourcePort
+		setForwardedFor(r, sourceAddr)
 		writer := &captureResponseWriter{
 			ResponseWriter: w,
 			capture:        capture,
@@ -70,6 +82,25 @@ func (m *Manager) WrapHTTPHandler(proxy, protocol, scheme, target string, next h
 		}()
 		next.ServeHTTP(writer, r)
 	})
+}
+
+func sourceFromRemoteAddr(remoteAddr string) (string, uint16) {
+	host, portValue, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		return strings.Trim(remoteAddr, "[]"), 0
+	}
+	port, err := strconv.ParseUint(portValue, 10, 16)
+	if err != nil {
+		return host, 0
+	}
+	return host, uint16(port)
+}
+
+func setForwardedFor(r *http.Request, sourceAddr string) {
+	if r == nil || sourceAddr == "" {
+		return
+	}
+	r.Header.Set("X-Forwarded-For", sourceAddr)
 }
 
 type captureResponseWriter struct {
@@ -197,7 +228,14 @@ func (m *Manager) ServeDirectHTTP(conn net.Conn, target, proxy string) error {
 		conn: &signalConn{Conn: conn, done: done},
 		done: done,
 	}
-	reverseProxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: target})
+	targetURL := &url.URL{Scheme: "http", Host: target}
+	reverseProxy := &httputil.ReverseProxy{}
+	reverseProxy.Rewrite = func(request *httputil.ProxyRequest) {
+		request.SetURL(targetURL)
+		request.Out.Host = request.In.Host
+		sourceAddr, _ := sourceFromRemoteAddr(request.In.RemoteAddr)
+		setForwardedFor(request.Out, sourceAddr)
+	}
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	}

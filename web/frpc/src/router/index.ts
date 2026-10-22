@@ -5,7 +5,6 @@ import VisitorsPage from '../views/VisitorsPage.vue'
 import CertificatesPage from '../views/CertificatesPage.vue'
 import CapturesPage from '../views/CapturesPage.vue'
 import ConfigWorkspace from '@shared/components/ConfigWorkspace.vue'
-import DiagnosticsPage from '@shared/components/DiagnosticsPage.vue'
 import SettingsPage from '@shared/components/SettingsPage.vue'
 
 const router = createRouter({
@@ -22,12 +21,7 @@ const router = createRouter({
     },
     { path: '/certificates', name: 'certificates', component: CertificatesPage },
     { path: '/captures', name: 'captures', component: CapturesPage },
-    {
-      path: '/diagnostics',
-      name: 'diagnostics',
-      component: DiagnosticsPage,
-      props: { role: 'client' },
-    },
+    { path: '/diagnostics', redirect: '/' },
     { path: '/settings', name: 'settings', component: SettingsPage },
     { path: '/login', redirect: '/' },
     { path: '/:pathMatch(.*)*', redirect: '/' },

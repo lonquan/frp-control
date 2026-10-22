@@ -226,6 +226,9 @@ func (pxy *BaseProxy) HandleTCPWorkConnection(workConn net.Conn, m *msg.StartWor
 			}
 			target := net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort))
 			captureConn := netpkg.WrapReadWriteCloserToConn(remote, workConn)
+			if connInfo.SrcAddr != nil {
+				captureConn.SetRemoteAddr(connInfo.SrcAddr)
+			}
 			if err := captures.ServeDirectHTTP(captureConn, target, baseCfg.Name); err != nil {
 				xl.Warnf("capture HTTP connection error: %v", err)
 			}

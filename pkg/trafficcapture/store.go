@@ -35,11 +35,12 @@ const (
 )
 
 type Settings struct {
-	Enabled       bool     `json:"enabled"`
-	Proxies       []string `json:"proxies"`
-	TTLSeconds    int64    `json:"ttlSeconds"`
-	MaxEntryBytes int64    `json:"maxEntryBytes"`
-	MaxTotalBytes int64    `json:"maxTotalBytes"`
+	Enabled         bool     `json:"enabled"`
+	Proxies         []string `json:"proxies"`
+	ExcludePatterns []string `json:"excludePatterns"`
+	TTLSeconds      int64    `json:"ttlSeconds"`
+	MaxEntryBytes   int64    `json:"maxEntryBytes"`
+	MaxTotalBytes   int64    `json:"maxTotalBytes"`
 }
 
 type Capture struct {
@@ -51,6 +52,8 @@ type Capture struct {
 	Host            string              `json:"host"`
 	Path            string              `json:"path"`
 	Query           string              `json:"query"`
+	SourceAddr      string              `json:"sourceAddr,omitempty"`
+	SourcePort      uint16              `json:"sourcePort,omitempty"`
 	RequestHeaders  map[string][]string `json:"requestHeaders,omitempty"`
 	RequestBody     []byte              `json:"requestBody,omitempty"`
 	ResponseStatus  int                 `json:"responseStatus"`
@@ -88,6 +91,8 @@ type ListItem struct {
 	Method         string    `json:"method"`
 	Host           string    `json:"host"`
 	Path           string    `json:"path"`
+	SourceAddr     string    `json:"sourceAddr,omitempty"`
+	SourcePort     uint16    `json:"sourcePort,omitempty"`
 	ResponseStatus int       `json:"responseStatus"`
 	StartedAt      time.Time `json:"startedAt"`
 	DurationMS     int64     `json:"durationMs"`
@@ -101,6 +106,7 @@ type Manager struct {
 	dir            string
 	settingsPath   string
 	settings       Settings
+	exclude        excludeMatcher
 	active         map[string]*Capture
 	targetResolver func(proxy string) (string, string, bool)
 }
@@ -164,6 +170,12 @@ func (m *Manager) loadSettings() error {
 	if m.settings.Proxies == nil {
 		m.settings.Proxies = []string{}
 	}
+	excludePatterns, err := normalizeExcludePatterns(m.settings.ExcludePatterns)
+	if err != nil {
+		return err
+	}
+	m.settings.ExcludePatterns = excludePatterns
+	m.exclude = compileExcludePatterns(excludePatterns)
 	m.applyDefaultLimits()
 	return nil
 }
@@ -185,11 +197,16 @@ func (m *Manager) Settings() Settings {
 	defer m.mu.Unlock()
 	copy := m.settings
 	copy.Proxies = append([]string(nil), m.settings.Proxies...)
+	copy.ExcludePatterns = append([]string(nil), m.settings.ExcludePatterns...)
 	return copy
 }
 
 func (m *Manager) SaveSettings(settings Settings) error {
 	m.applyDefaultLimits()
+	excludePatterns, err := normalizeExcludePatterns(settings.ExcludePatterns)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	if settings.TTLSeconds <= 0 {
 		settings.TTLSeconds = int64(defaultTTL.Seconds())
@@ -201,7 +218,9 @@ func (m *Manager) SaveSettings(settings Settings) error {
 		settings.MaxTotalBytes = defaultMaxTotalBytes
 	}
 	settings.Proxies = normalizeProxies(settings.Proxies)
+	settings.ExcludePatterns = excludePatterns
 	m.settings = settings
+	m.exclude = compileExcludePatterns(excludePatterns)
 	b, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		m.mu.Unlock()
@@ -230,6 +249,13 @@ func (m *Manager) Limits() (maxEntryBytes, ttlSeconds int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.settings.MaxEntryBytes, m.settings.TTLSeconds
+}
+
+func (m *Manager) Excluded(path, rawQuery string) bool {
+	m.mu.Lock()
+	matcher := m.exclude
+	m.mu.Unlock()
+	return matcher.matches(path, rawQuery)
 }
 
 func (m *Manager) Begin(proxy, protocol, scheme, target, method, host, path, query string, requestHeaders map[string][]string, requestBody []byte, truncated bool) *Capture {
@@ -324,6 +350,8 @@ func (m *Manager) List(proxy, method, status, query string, limit int) ([]ListIt
 			Method:         capture.Method,
 			Host:           capture.Host,
 			Path:           capture.Path,
+			SourceAddr:     capture.SourceAddr,
+			SourcePort:     capture.SourcePort,
 			ResponseStatus: capture.ResponseStatus,
 			StartedAt:      capture.StartedAt,
 			DurationMS:     capture.DurationMS,
