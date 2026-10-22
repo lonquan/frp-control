@@ -113,6 +113,25 @@ func newHTTPBridgeReverseProxy(
 	return rp
 }
 
+func appendForwardedHeaders(req *httputil.ProxyRequest) {
+	forwardedHost := req.In.Header.Get("X-Forwarded-Host")
+	forwardedProto := req.In.Header.Get("X-Forwarded-Proto")
+	req.Out.Header["X-Forwarded-For"] = req.In.Header["X-Forwarded-For"]
+	req.SetXForwarded()
+	if forwardedHost != "" {
+		req.Out.Header.Set("X-Forwarded-Host", forwardedHost)
+	}
+	if forwardedProto != "" {
+		req.Out.Header.Set("X-Forwarded-Proto", forwardedProto)
+	}
+}
+
+func copyForwardedHeaders(req *httputil.ProxyRequest) {
+	req.Out.Header["X-Forwarded-For"] = req.In.Header["X-Forwarded-For"]
+	req.Out.Header["X-Forwarded-Host"] = req.In.Header["X-Forwarded-Host"]
+	req.Out.Header["X-Forwarded-Proto"] = req.In.Header["X-Forwarded-Proto"]
+}
+
 func (p *httpBridgePlugin) Handle(_ context.Context, connInfo *ConnectionInfo) {
 	wrapConn := netpkg.WrapReadWriteCloserToConn(connInfo.Conn, connInfo.UnderlyingConn)
 	if p.useSourceRemoteAddr && connInfo.SrcAddr != nil {

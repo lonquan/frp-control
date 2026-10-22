@@ -48,9 +48,7 @@ func NewHTTP2HTTPSPlugin(pluginCtx PluginContext, options v1.ClientPluginOptions
 
 	rp := newHTTPBridgeReverseProxy(
 		func(r *httputil.ProxyRequest) {
-			r.Out.Header["X-Forwarded-For"] = r.In.Header["X-Forwarded-For"]
-			r.Out.Header["X-Forwarded-Host"] = r.In.Header["X-Forwarded-Host"]
-			r.Out.Header["X-Forwarded-Proto"] = r.In.Header["X-Forwarded-Proto"]
+			copyForwardedHeaders(r)
 			req := r.Out
 			rewriteHTTPPluginRequest(req, "https", p.opts.LocalAddr, p.opts.HostHeaderRewrite, p.opts.RequestHeaders)
 		},
