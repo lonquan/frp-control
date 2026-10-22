@@ -12,7 +12,7 @@
 - `lonquan/frp-frps`
 - `lonquan/frp-frpc`
 
-推荐直接拉取固定版本 `v0.0.1` 并通过 `docker run` 启动。支持 Docker Desktop
+推荐直接拉取固定版本 `v0.0.2` 并通过 `docker run` 启动。支持 Docker Desktop
 的 Linux 容器，不支持原生 Windows 容器。
 
 前端由 Dockerfile 内的 Node.js 多阶段构建生成，不要求宿主机安装 Node.js，
@@ -20,24 +20,24 @@
 
 ## 从 Docker Hub 直接运行（推荐）
 
-镜像分发版本与内置 frp 上游版本独立演进。首个发布版本为 `v0.0.1`，
+镜像分发版本与内置 frp 上游版本独立演进。当前文档示例版本为 `v0.0.2`，
 `latest` 会随正式版本移动，生产环境应固定版本。
 
 ```bash
-docker pull lonquan/frp-frps:v0.0.1
-docker pull lonquan/frp-frpc:v0.0.1
+docker pull lonquan/frp-frps:v0.0.2
+docker pull lonquan/frp-frpc:v0.0.2
 ```
 
 版本查看：
 
 ```bash
 docker run --rm --entrypoint /usr/bin/frps \
-  lonquan/frp-frps:v0.0.1 --version
+  lonquan/frp-frps:v0.0.2 --version
 docker run --rm --entrypoint /usr/bin/frpc \
-  lonquan/frp-frpc:v0.0.1 --version
+  lonquan/frp-frpc:v0.0.2 --version
 ```
 
-输出格式为 `0.0.1 (frp 0.71.1)`。
+输出格式为 `0.0.2 (frp 0.71.1)`。
 
 ### 启动 frps
 
@@ -68,7 +68,7 @@ docker run -d --name frps \
   -v "$HOME/frp/frps/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frps:v0.0.1
+  lonquan/frp-frps:v0.0.2
 ```
 
 Linux 以外的 Docker Desktop 环境通常不需要 `chown`。如果系统没有 `sudo` 或
@@ -102,7 +102,7 @@ docker run -d --name frpc \
   -v "$HOME/frp/frpc/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frpc:v0.0.1
+  lonquan/frp-frpc:v0.0.2
 ```
 
 ### Docker secrets
@@ -156,7 +156,7 @@ GitHub 无法访问时，可改用 CNB 浅克隆：
 
 ```bash
 git clone --depth 1 --single-branch --no-tags --branch master \
-  https://cnb.cool/antcool/frp frp-control
+  https://cnb.cool/antcool/frp-control frp-control
 cd frp-control
 ```
 
@@ -451,40 +451,29 @@ frpc 不需要发布 6000。它只需要能够出站连接 frps，并通过
 - RSA 2048、RSA 4096、ECDSA P-256、ECDSA P-384
 - 到期前 30 天自动续期
 - 续期失败时保留上一份有效证书
+- 单证书续期、全部续期和证书/私钥 ZIP 下载
 
 ### DNS-01
 
-DNS 凭据不通过面板录入，只从容器环境变量读取。将对应变量写入 `deploy/frpc/.env` 并重新创建容器：
+DNS 凭据在客户端控制台的“证书 → DNS 设置”中录入。配置保存在
+`/var/lib/frp/acme/dns-provider.json`，文件权限为 0600；不需要修改
+`deploy/frpc/.env`。保存前会在 `frp-acme` 中构造 provider 做预检。
 
-```bash
-docker compose up -d --force-recreate
-```
-
-常见变量示例：
-
-```dotenv
-# Cloudflare
-CF_DNS_API_TOKEN=...
-
-# 阿里云 DNS
-ALICLOUD_ACCESS_KEY=...
-ALICLOUD_SECRET_KEY=...
-
-# 腾讯云 DNS
-TENCENTCLOUD_SECRET_ID=...
-TENCENTCLOUD_SECRET_KEY=...
-```
-
-提供商名称和完整变量列表以固定版本 lego 文档为准：
+提供商名称和凭据字段以固定版本 lego 元数据为准：
 
 <https://go-acme.github.io/lego/dns/>
 
-面板中的提供商字段接受 lego 的 provider 名称，例如 `cloudflare`、`alidns`、`tencentcloud`。
+面板支持除 `manual` 和 `exec` 外的全部 lego DNS provider。旧环境变量中的 DNS
+凭据不会自动迁移，也不会作为文件配置的兜底。
 
 HTTP-01 已完全移除，证书签发只接受 DNS-01。证书文件写入
 `/var/lib/frp/acme/certificates/<id>/`。代理表单默认从可用证书目录选择托管
 证书，也可以切换为手工路径模式。托管证书通过 `certificateId` 和
 `frp.certificate.id` metadata 建立引用，证书续期成功后会自动重载相关插件。
+
+新建证书后立即签发，证书名称不可重复，证书内容创建后不可修改。单行“续期”
+只处理当前证书，“全部续期”串行处理所有非签发中证书。下载按钮生成包含证书
+和私钥的 ZIP，请限制客户端数据目录和下载文件的访问权限。
 
 可用证书目录只返回证书和私钥可读取、密钥匹配且未过期的证书。显式
 `customDomains` 必须被证书 SAN 覆盖；`subdomain` 因依赖 frps 的

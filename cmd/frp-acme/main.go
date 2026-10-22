@@ -43,14 +43,20 @@ import (
 const defaultCA = "https://acme-v02.api.letsencrypt.org/directory"
 
 type job struct {
-	Email       string   `json:"email"`
-	Domains     []string `json:"domains"`
-	Provider    string   `json:"provider,omitempty"`
-	CAURL       string   `json:"caURL,omitempty"`
-	KeyType     string   `json:"keyType"`
-	CertPath    string   `json:"certPath"`
-	KeyPath     string   `json:"keyPath"`
-	AccountPath string   `json:"accountPath"`
+	Email       string            `json:"email"`
+	Domains     []string          `json:"domains"`
+	Provider    string            `json:"provider,omitempty"`
+	CAURL       string            `json:"caURL,omitempty"`
+	KeyType     string            `json:"keyType"`
+	CertPath    string            `json:"certPath"`
+	KeyPath     string            `json:"keyPath"`
+	AccountPath string            `json:"accountPath"`
+	ProviderEnv map[string]string `json:"providerEnv,omitempty"`
+}
+
+type providerCheck struct {
+	Provider    string            `json:"provider"`
+	ProviderEnv map[string]string `json:"providerEnv"`
 }
 
 type account struct {
@@ -73,9 +79,16 @@ func (a *account) GetPrivateKey() crypto.Signer {
 
 func main() {
 	jobPath := flag.String("job", "", "path to ACME job JSON")
+	checkPath := flag.String("validate-provider", "", "path to DNS provider configuration JSON")
 	flag.Parse()
-	if *jobPath == "" {
-		log.Fatal("--job is required")
+	if (*jobPath == "") == (*checkPath == "") {
+		log.Fatal("exactly one of --job or --validate-provider is required")
+	}
+	if *checkPath != "" {
+		if err := validateProvider(*checkPath); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	if err := run(*jobPath); err != nil {
 		log.Fatal(err)
@@ -94,6 +107,7 @@ func run(jobPath string) error {
 	if err := validateJob(request); err != nil {
 		return err
 	}
+	applyProviderEnv(request.ProviderEnv)
 	if err := os.MkdirAll(request.AccountPath, 0o700); err != nil {
 		return err
 	}
@@ -137,13 +151,40 @@ func run(jobPath string) error {
 	if err != nil {
 		return fmt.Errorf("obtain certificate: %w", err)
 	}
-	if err := writeFile(request.CertPath, certificates.Certificate, 0o644); err != nil {
-		return err
-	}
-	if err := writeFile(request.KeyPath, certificates.PrivateKey, 0o600); err != nil {
+	if err := writeCertificatePair(
+		request.CertPath,
+		request.KeyPath,
+		certificates.Certificate,
+		certificates.PrivateKey,
+	); err != nil {
 		return err
 	}
 	return nil
+}
+
+func validateProvider(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var request providerCheck
+	if err := json.Unmarshal(b, &request); err != nil {
+		return err
+	}
+	if strings.TrimSpace(request.Provider) == "" {
+		return errors.New("DNS provider is required")
+	}
+	applyProviderEnv(request.ProviderEnv)
+	if _, err := dns.NewDNSChallengeProviderByName(strings.TrimSpace(request.Provider)); err != nil {
+		return fmt.Errorf("create DNS provider %q: %w", request.Provider, err)
+	}
+	return nil
+}
+
+func applyProviderEnv(values map[string]string) {
+	for name, value := range values {
+		_ = os.Setenv(name, value)
+	}
 }
 
 func validateJob(request job) error {
@@ -206,29 +247,73 @@ func parseKeyType(value string) certcrypto.KeyType {
 }
 
 func writeFile(path string, content []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
+	tmpName, err := stageFile(path, content, mode)
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmpName)
+	return os.Rename(tmpName, path)
+}
+
+func writeCertificatePair(certPath, keyPath string, certContent, keyContent []byte) error {
+	oldKey, err := os.ReadFile(keyPath)
+	oldKeyExists := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	certTmp, err := stageFile(certPath, certContent, 0o644)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(certTmp)
+	keyTmp, err := stageFile(keyPath, keyContent, 0o600)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(keyTmp)
+	if err := os.Rename(keyTmp, keyPath); err != nil {
+		return err
+	}
+	if err := os.Rename(certTmp, certPath); err != nil {
+		if oldKeyExists {
+			if restoreErr := writeFile(keyPath, oldKey, 0o600); restoreErr != nil {
+				return fmt.Errorf("replace certificate: %w; restore private key: %v", err, restoreErr)
+			}
+		} else if removeErr := os.Remove(keyPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return fmt.Errorf("replace certificate: %w; remove new private key: %v", err, removeErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func stageFile(path string, content []byte, mode os.FileMode) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return "", err
+	}
 	name := tmp.Name()
-	defer os.Remove(name)
 	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
-		return err
+		os.Remove(name)
+		return "", err
 	}
 	if _, err := tmp.Write(content); err != nil {
 		tmp.Close()
-		return err
+		os.Remove(name)
+		return "", err
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
-		return err
+		os.Remove(name)
+		return "", err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		os.Remove(name)
+		return "", err
 	}
-	return os.Rename(name, path)
+	return name, nil
 }

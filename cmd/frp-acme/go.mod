@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/go-acme/lego/v5 v5.5.2
+	github.com/pelletier/go-toml/v2 v2.1.0
 	github.com/stretchr/testify v1.12.1
 )
 
@@ -140,7 +141,6 @@ require (
 	github.com/nzdjb/go-metaname v1.0.0 // indirect
 	github.com/openshift/gssapi v0.0.0-20161010215902-5fb4217df13b // indirect
 	github.com/ovh/go-ovh v1.9.0 // indirect
-	github.com/pelletier/go-toml/v2 v2.1.0 // indirect
 	github.com/peterhellberg/link v1.2.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect

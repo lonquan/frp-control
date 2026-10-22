@@ -15,12 +15,12 @@
 package admin
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -36,21 +36,35 @@ import (
 )
 
 type Certificate struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Domains     []string  `json:"domains"`
-	Provider    string    `json:"provider,omitempty"`
-	Email       string    `json:"email"`
-	CAURL       string    `json:"caURL,omitempty"`
-	KeyType     string    `json:"keyType"`
-	Status      string    `json:"status"`
-	LastError   string    `json:"lastError,omitempty"`
-	CertPath    string    `json:"certPath,omitempty"`
-	KeyPath     string    `json:"keyPath,omitempty"`
-	NotAfter    time.Time `json:"notAfter,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	LastIssueAt time.Time `json:"lastIssueAt,omitempty"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Domains      []string  `json:"domains"`
+	Provider     string    `json:"provider,omitempty"`
+	Email        string    `json:"email"`
+	CAURL        string    `json:"caURL,omitempty"`
+	KeyType      string    `json:"keyType"`
+	Status       string    `json:"status"`
+	LastError    string    `json:"lastError,omitempty"`
+	CertPath     string    `json:"certPath,omitempty"`
+	KeyPath      string    `json:"keyPath,omitempty"`
+	NotAfter     time.Time `json:"notAfter,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	LastIssueAt  time.Time `json:"lastIssueAt,omitempty"`
+	Downloadable bool      `json:"downloadable"`
+}
+
+type certificateInput struct {
+	Name    string   `json:"name"`
+	Domains []string `json:"domains"`
+	Email   string   `json:"email"`
+	CAURL   string   `json:"caURL,omitempty"`
+	KeyType string   `json:"keyType"`
+}
+
+type RenewAllResult struct {
+	Accepted int `json:"accepted"`
+	Skipped  int `json:"skipped"`
 }
 
 type AvailableCertificate struct {
@@ -75,7 +89,12 @@ type CertificateInUseError struct {
 	Proxies []string
 }
 
-var errCertificateIssuing = errors.New("证书正在签发，不能删除")
+var (
+	errCertificateIssuing       = errors.New("证书正在签发，不能删除")
+	errCertificateImmutable     = errors.New("证书创建后不可修改，请删除后重新创建")
+	errCertificateNameExists    = errors.New("证书名称已存在")
+	errDNSProviderNotConfigured = errors.New("请先在 DNS 设置中配置 provider 和凭据")
+)
 
 func (e *CertificateInUseError) Error() string {
 	return fmt.Sprintf("证书仍被代理引用: %s", strings.Join(e.Proxies, ", "))
@@ -86,25 +105,34 @@ type certificateState struct {
 }
 
 type CertificateManager struct {
-	mu            sync.Mutex
-	dataDir       string
-	statePath     string
-	helperPath    string
-	records       map[string]*Certificate
-	reloadCerts   func()
-	references    func(id, certPath, keyPath string) []string
-	lastRenewScan time.Time
+	mu                 sync.Mutex
+	providerMu         sync.Mutex
+	dataDir            string
+	statePath          string
+	providerConfigPath string
+	helperPath         string
+	records            map[string]*Certificate
+	reloadCerts        func()
+	references         func(id, certPath, keyPath string) []string
+	lastRenewScan      time.Time
+	providerRegistry   *dnsProviderRegistry
+	providerConfig     dnsProviderConfigState
+	providerCheck      func(provider string, credentials map[string]string) error
+	acmeRunner         func(context.Context, acmeJob) error
+	issueSem           chan struct{}
 }
 
 type acmeJob struct {
-	Email       string   `json:"email"`
-	Domains     []string `json:"domains"`
-	Provider    string   `json:"provider,omitempty"`
-	CAURL       string   `json:"caURL,omitempty"`
-	KeyType     string   `json:"keyType"`
-	CertPath    string   `json:"certPath"`
-	KeyPath     string   `json:"keyPath"`
-	AccountPath string   `json:"accountPath"`
+	ID          string            `json:"-"`
+	Email       string            `json:"email"`
+	Domains     []string          `json:"domains"`
+	Provider    string            `json:"provider,omitempty"`
+	CAURL       string            `json:"caURL,omitempty"`
+	KeyType     string            `json:"keyType"`
+	CertPath    string            `json:"certPath"`
+	KeyPath     string            `json:"keyPath"`
+	AccountPath string            `json:"accountPath"`
+	ProviderEnv map[string]string `json:"providerEnv,omitempty"`
 }
 
 func NewCertificateManager(dataDir string, reloadCerts func(), references func(id, certPath, keyPath string) []string) (*CertificateManager, error) {
@@ -112,18 +140,31 @@ func NewCertificateManager(dataDir string, reloadCerts func(), references func(i
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	registry, err := loadDNSProviderRegistry()
+	if err != nil {
+		return nil, err
+	}
 	manager := &CertificateManager{
-		dataDir:     dir,
-		statePath:   filepath.Join(dir, "certificates.json"),
-		helperPath:  os.Getenv("FRP_ACME_HELPER"),
-		records:     make(map[string]*Certificate),
-		reloadCerts: reloadCerts,
-		references:  references,
+		dataDir:            dir,
+		statePath:          filepath.Join(dir, "certificates.json"),
+		providerConfigPath: filepath.Join(dir, "dns-provider.json"),
+		helperPath:         os.Getenv("FRP_ACME_HELPER"),
+		records:            make(map[string]*Certificate),
+		reloadCerts:        reloadCerts,
+		references:         references,
+		providerRegistry:   registry,
+		issueSem:           make(chan struct{}, 1),
 	}
 	if manager.helperPath == "" {
 		manager.helperPath = "/usr/bin/frp-acme"
 	}
+	if err := manager.loadDNSProviderConfig(); err != nil {
+		return nil, err
+	}
 	if err := manager.load(); err != nil {
+		return nil, err
+	}
+	if err := cleanupACMETemporaryFiles(dir); err != nil {
 		return nil, err
 	}
 	return manager, nil
@@ -157,8 +198,22 @@ func (m *CertificateManager) load() error {
 	if err := json.Unmarshal(b, &state); err != nil {
 		return err
 	}
+	changed := false
 	for _, cert := range state.Certificates {
+		if cert == nil || cert.ID == "" {
+			continue
+		}
+		cert.Downloadable = false
+		if cert.Status == "issuing" {
+			cert.Status = "error"
+			cert.LastError = "上次签发被中断"
+			cert.UpdatedAt = time.Now()
+			changed = true
+		}
 		m.records[cert.ID] = cert
+	}
+	if changed {
+		return m.saveLocked()
 	}
 	return nil
 }
@@ -180,8 +235,11 @@ func (m *CertificateManager) saveLocked() error {
 
 func (m *CertificateManager) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/api/v2/certificates/available", m.handleAvailable).Methods(http.MethodGet)
+	m.RegisterDNSProviderRoutes(router)
 	router.HandleFunc("/api/v2/certificates", m.handleListCreate).Methods(http.MethodGet, http.MethodPost)
+	router.HandleFunc("/api/v2/certificates/renew-all", m.handleRenewAll).Methods(http.MethodPost)
 	router.HandleFunc("/api/v2/certificates/{id}", m.handleUpdateDelete).Methods(http.MethodPut, http.MethodDelete)
+	router.HandleFunc("/api/v2/certificates/{id}/download", m.handleDownload).Methods(http.MethodGet)
 	router.HandleFunc("/api/v2/certificates/{id}/issue", m.handleIssue).Methods(http.MethodPost)
 	router.HandleFunc("/api/v2/certificates/{id}/renew", m.handleIssue).Methods(http.MethodPost)
 }
@@ -196,17 +254,18 @@ func (m *CertificateManager) handleListCreate(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusOK, records)
 		return
 	}
-	var body Certificate
+	var body certificateInput
 	if err := decodeJSON(w, r, &body); err != nil {
 		return
 	}
-	cert, issueNow, err := m.create(body)
+	cert, err := m.createAndIssue(body)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		if errors.Is(err, errDNSProviderNotConfigured) || errors.Is(err, errCertificateNameExists) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+		}
 		return
-	}
-	if issueNow {
-		_, _ = m.issueAsync(cert.ID)
 	}
 	writeJSON(w, http.StatusCreated, cert)
 }
@@ -226,16 +285,7 @@ func (m *CertificateManager) handleUpdateDelete(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	var body Certificate
-	if err := decodeJSON(w, r, &body); err != nil {
-		return
-	}
-	cert, err := m.update(id, body)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, cert)
+	writeError(w, http.StatusConflict, errCertificateImmutable.Error())
 }
 
 func (m *CertificateManager) handleIssue(w http.ResponseWriter, r *http.Request) {
@@ -255,12 +305,25 @@ func (m *CertificateManager) handleIssue(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
 }
 
+func (m *CertificateManager) handleRenewAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "请求方法不支持")
+		return
+	}
+	result, err := m.renewAll()
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
 func (m *CertificateManager) list() []Certificate {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	records := make([]Certificate, 0, len(m.records))
 	for _, cert := range m.records {
-		records = append(records, *cert)
+		records = append(records, m.certificateViewLocked(cert))
 	}
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].CreatedAt.After(records[j].CreatedAt)
@@ -323,6 +386,7 @@ func (m *CertificateManager) get(id string) (*Certificate, bool) {
 	}
 	copy := *cert
 	copy.Domains = append([]string(nil), cert.Domains...)
+	m.decorateCertificateLocked(&copy)
 	return &copy, true
 }
 
@@ -369,69 +433,55 @@ func resolveCertificateMaterial(cert *Certificate) (*CertificateMaterial, error)
 	}, nil
 }
 
-func (m *CertificateManager) create(input Certificate) (*Certificate, bool, error) {
-	if err := validateCertificate(input); err != nil {
-		return nil, false, err
+func (m *CertificateManager) createAndIssue(input certificateInput) (*Certificate, error) {
+	if err := validateCertificateInput(input); err != nil {
+		return nil, err
 	}
-	issueNow := input.Status == "issue"
+	provider, err := m.dnsProviderSnapshot()
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	id, err := randomToken()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	id = id[:12]
 	cert := &Certificate{
 		ID:        id,
 		Name:      strings.TrimSpace(input.Name),
 		Domains:   normalizeDomains(input.Domains),
-		Provider:  strings.TrimSpace(input.Provider),
+		Provider:  provider.Provider,
 		Email:     strings.TrimSpace(input.Email),
 		CAURL:     strings.TrimSpace(input.CAURL),
 		KeyType:   strings.TrimSpace(input.KeyType),
-		Status:    "pending",
+		Status:    "issuing",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 	if cert.KeyType == "" {
 		cert.KeyType = "rsa2048"
 	}
+	job := m.newACMEJob(cert, provider)
 	m.mu.Lock()
+	for _, existing := range m.records {
+		if strings.EqualFold(existing.Name, cert.Name) {
+			m.mu.Unlock()
+			return nil, errCertificateNameExists
+		}
+	}
 	m.records[id] = cert
 	err = m.saveLocked()
+	if err != nil {
+		delete(m.records, id)
+	}
 	m.mu.Unlock()
 	if err != nil {
-		return nil, false, err
-	}
-	copy := *cert
-	return &copy, issueNow, nil
-}
-
-func (m *CertificateManager) update(id string, input Certificate) (*Certificate, error) {
-	if err := validateCertificate(input); err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cert := m.records[id]
-	if cert == nil {
-		return nil, errors.New("证书不存在")
-	}
-	cert.Name = strings.TrimSpace(input.Name)
-	cert.Domains = normalizeDomains(input.Domains)
-	cert.Provider = strings.TrimSpace(input.Provider)
-	cert.Email = strings.TrimSpace(input.Email)
-	cert.CAURL = strings.TrimSpace(input.CAURL)
-	cert.KeyType = input.KeyType
-	if cert.KeyType == "" {
-		cert.KeyType = "rsa2048"
-	}
-	cert.UpdatedAt = time.Now()
-	if err := m.saveLocked(); err != nil {
-		return nil, err
-	}
-	copy := *cert
-	copy.Domains = append([]string(nil), cert.Domains...)
-	return &copy, nil
+	go m.issue(job)
+	view := m.certificateView(cert)
+	return &view, nil
 }
 
 func (m *CertificateManager) delete(id string) error {
@@ -467,83 +517,129 @@ func (m *CertificateManager) delete(id string) error {
 }
 
 func (m *CertificateManager) issueAsync(id string) (bool, error) {
+	provider, err := m.dnsProviderSnapshot()
+	if err != nil {
+		return false, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cert := m.records[id]
-	if cert == nil || cert.Status == "issuing" {
-		if cert == nil {
-			return false, errors.New("证书不存在")
-		}
+	if cert == nil {
+		return false, errors.New("证书不存在")
+	}
+	if cert.Status == "issuing" {
 		return false, errors.New("该证书已有签发任务正在执行")
 	}
-	if strings.TrimSpace(cert.Provider) == "" {
-		cert.Status = "error"
-		cert.LastError = "DNS 提供商不能为空"
-		cert.UpdatedAt = time.Now()
-		_ = m.saveLocked()
-		return false, errors.New(cert.LastError)
-	}
+	job := m.newACMEJob(cert, provider)
+	previousStatus := cert.Status
+	previousError := cert.LastError
+	previousProvider := cert.Provider
+	previousUpdatedAt := cert.UpdatedAt
 	cert.Status = "issuing"
 	cert.LastError = ""
 	cert.UpdatedAt = time.Now()
-	copy := *cert
-	copy.Domains = append([]string(nil), cert.Domains...)
-	_ = m.saveLocked()
-	go m.issue(id, &copy)
+	cert.Provider = provider.Provider
+	if err := m.saveLocked(); err != nil {
+		cert.Status = previousStatus
+		cert.LastError = previousError
+		cert.Provider = previousProvider
+		cert.UpdatedAt = previousUpdatedAt
+		return false, err
+	}
+	go m.issue(job)
 	return true, nil
 }
 
-func (m *CertificateManager) issue(id string, cert *Certificate) {
-	certDir := filepath.Join(m.dataDir, "certificates", id)
-	if err := os.MkdirAll(certDir, 0o700); err != nil {
-		m.finishIssue(id, "", "", time.Time{}, err)
-		return
-	}
-	job := acmeJob{
+func (m *CertificateManager) newACMEJob(cert *Certificate, provider dnsProviderConfigState) acmeJob {
+	certDir := filepath.Join(m.dataDir, "certificates", cert.ID)
+	return acmeJob{
+		ID:          cert.ID,
 		Email:       cert.Email,
-		Domains:     cert.Domains,
-		Provider:    cert.Provider,
+		Domains:     append([]string(nil), cert.Domains...),
+		Provider:    provider.Provider,
+		ProviderEnv: copyStringMap(provider.Credentials),
 		CAURL:       cert.CAURL,
 		KeyType:     cert.KeyType,
 		CertPath:    filepath.Join(certDir, "cert.pem"),
 		KeyPath:     filepath.Join(certDir, "key.pem"),
 		AccountPath: filepath.Join(m.dataDir, "account"),
 	}
-	jobPath := filepath.Join(certDir, "job.json")
-	b, err := json.MarshalIndent(job, "", "  ")
-	if err != nil {
-		m.finishIssue(id, "", "", time.Time{}, err)
+}
+
+func (m *CertificateManager) issue(job acmeJob) {
+	m.issueSem <- struct{}{}
+	defer func() { <-m.issueSem }()
+
+	certDir := filepath.Join(m.dataDir, "certificates", job.ID)
+	if err := os.MkdirAll(certDir, 0o700); err != nil {
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
 		return
 	}
-	if err := atomicWrite(jobPath, b, 0o600); err != nil {
-		m.finishIssue(id, "", "", time.Time{}, err)
+	b, err := json.MarshalIndent(job, "", "  ")
+	if err != nil {
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
+		return
+	}
+	jobFile, err := os.CreateTemp(certDir, ".job-*.json")
+	if err != nil {
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
+		return
+	}
+	jobPath := jobFile.Name()
+	defer os.Remove(jobPath)
+	if err := jobFile.Chmod(0o600); err != nil {
+		jobFile.Close()
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
+		return
+	}
+	if _, err := jobFile.Write(b); err != nil {
+		jobFile.Close()
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
+		return
+	}
+	if err := jobFile.Close(); err != nil {
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.helperPath, "--job", jobPath)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err = cmd.Run()
+	if m.acmeRunner != nil {
+		err = m.acmeRunner(ctx, job)
+	} else {
+		err = m.runACMEHelper(ctx, jobPath, job.ProviderEnv)
+	}
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			err = errors.New("ACME 任务超时")
-		} else {
-			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(output.String()))
-		}
-		m.finishIssue(id, "", "", time.Time{}, err)
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
 		return
 	}
-	notAfter, err := certificateNotAfter(job.CertPath)
+	notAfter, err := certificateNotAfter(job.CertPath, job.KeyPath)
 	if err != nil {
-		m.finishIssue(id, "", "", time.Time{}, err)
+		m.finishIssue(job.ID, "", "", time.Time{}, err)
 		return
 	}
-	m.finishIssue(id, job.CertPath, job.KeyPath, notAfter, nil)
+	m.finishIssue(job.ID, job.CertPath, job.KeyPath, notAfter, nil)
 	if m.reloadCerts != nil {
 		m.reloadCerts()
 	}
+}
+
+func (m *CertificateManager) runACMEHelper(ctx context.Context, jobPath string, providerEnv map[string]string) error {
+	cmd := exec.CommandContext(ctx, m.helperPath, "--job", jobPath)
+	cmd.Env = m.helperEnvironment(providerEnv)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return errors.New("ACME 任务超时")
+	}
+	if message := strings.TrimSpace(output.String()); message != "" {
+		return fmt.Errorf("%w: %s", err, message)
+	}
+	return err
 }
 
 func (m *CertificateManager) finishIssue(id, certPath, keyPath string, notAfter time.Time, issueErr error) {
@@ -554,6 +650,7 @@ func (m *CertificateManager) finishIssue(id, certPath, keyPath string, notAfter 
 		return
 	}
 	cert.UpdatedAt = time.Now()
+	cert.Downloadable = false
 	if issueErr != nil {
 		cert.Status = "error"
 		cert.LastError = issueErr.Error()
@@ -566,6 +663,45 @@ func (m *CertificateManager) finishIssue(id, certPath, keyPath string, notAfter 
 		cert.LastIssueAt = time.Now()
 	}
 	_ = m.saveLocked()
+}
+
+func (m *CertificateManager) renewAll() (RenewAllResult, error) {
+	provider, err := m.dnsProviderSnapshot()
+	if err != nil {
+		return RenewAllResult{}, err
+	}
+	var jobs []acmeJob
+	result := RenewAllResult{}
+	previous := make(map[string]*Certificate)
+	m.mu.Lock()
+	for id, cert := range m.records {
+		if cert.Status == "issuing" {
+			result.Skipped++
+			continue
+		}
+		snapshot := *cert
+		snapshot.Domains = append([]string(nil), cert.Domains...)
+		previous[id] = &snapshot
+		job := m.newACMEJob(cert, provider)
+		cert.Status = "issuing"
+		cert.LastError = ""
+		cert.Provider = provider.Provider
+		cert.UpdatedAt = time.Now()
+		jobs = append(jobs, job)
+		result.Accepted++
+	}
+	if err := m.saveLocked(); err != nil {
+		for id, snapshot := range previous {
+			m.records[id] = snapshot
+		}
+		m.mu.Unlock()
+		return RenewAllResult{}, err
+	}
+	m.mu.Unlock()
+	for _, job := range jobs {
+		go m.issue(job)
+	}
+	return result, nil
 }
 
 func (m *CertificateManager) renewDue() {
@@ -587,26 +723,177 @@ func (m *CertificateManager) renewDue() {
 	}
 }
 
-func validateCertificate(cert Certificate) error {
-	if strings.TrimSpace(cert.Name) == "" {
+func validateCertificateInput(input certificateInput) error {
+	if strings.TrimSpace(input.Name) == "" {
 		return errors.New("证书名称不能为空")
 	}
-	domains := normalizeDomains(cert.Domains)
+	domains := normalizeDomains(input.Domains)
 	if len(domains) == 0 {
 		return errors.New("至少需要一个域名")
-	}
-	if strings.TrimSpace(cert.Provider) == "" {
-		return errors.New("DNS-01 必须选择 DNS 提供商")
 	}
 	for _, domain := range domains {
 		if strings.Contains(domain, " ") || !strings.Contains(domain, ".") {
 			return fmt.Errorf("域名格式无效: %s", domain)
 		}
 	}
-	if strings.TrimSpace(cert.Email) == "" {
+	if strings.TrimSpace(input.Email) == "" {
 		return errors.New("ACME 账号邮箱不能为空")
 	}
 	return nil
+}
+
+func (m *CertificateManager) certificateView(cert *Certificate) Certificate {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.certificateViewLocked(cert)
+}
+
+func (m *CertificateManager) certificateViewLocked(cert *Certificate) Certificate {
+	view := *cert
+	view.Domains = append([]string(nil), cert.Domains...)
+	view.Status = effectiveCertificateStatus(&view)
+	_, err := m.secureCertificateFiles(&view)
+	view.Downloadable = err == nil
+	return view
+}
+
+func (m *CertificateManager) decorateCertificateLocked(cert *Certificate) {
+	cert.Status = effectiveCertificateStatus(cert)
+	_, err := m.secureCertificateFiles(cert)
+	cert.Downloadable = err == nil
+}
+
+func effectiveCertificateStatus(cert *Certificate) string {
+	if cert.Status == "issuing" || cert.Status == "pending" {
+		return cert.Status
+	}
+	if !cert.NotAfter.IsZero() && !time.Now().Before(cert.NotAfter) {
+		return "expired"
+	}
+	return cert.Status
+}
+
+func cleanupACMETemporaryFiles(root string) error {
+	paths := []string{root}
+	certificatesDir := filepath.Join(root, "certificates")
+	entries, err := os.ReadDir(certificatesDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			paths = append(paths, filepath.Join(certificatesDir, entry.Name()))
+		}
+	}
+	for _, dir := range paths {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			name := file.Name()
+			if file.IsDir() || (!strings.HasPrefix(name, ".job-") && !strings.HasPrefix(name, ".provider-check-")) {
+				continue
+			}
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *CertificateManager) secureCertificateFiles(cert *Certificate) ([]string, error) {
+	if cert == nil || cert.ID == "" || cert.CertPath == "" || cert.KeyPath == "" {
+		return nil, errors.New("证书文件尚未生成")
+	}
+	if filepath.Base(cert.ID) != cert.ID || !filepath.IsLocal(cert.ID) {
+		return nil, errors.New("证书 ID 无效")
+	}
+	certDir := filepath.Join(m.dataDir, "certificates", cert.ID)
+	certPath := filepath.Join(certDir, "cert.pem")
+	keyPath := filepath.Join(certDir, "key.pem")
+	if !pathWithin(m.dataDir, certDir) {
+		return nil, errors.New("证书目录路径无效")
+	}
+	dirInfo, err := os.Lstat(certDir)
+	if err != nil {
+		return nil, err
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 || !dirInfo.IsDir() {
+		return nil, errors.New("证书目录不是普通目录")
+	}
+	if filepath.Clean(cert.CertPath) != certPath || filepath.Clean(cert.KeyPath) != keyPath {
+		return nil, errors.New("证书文件路径无效")
+	}
+	for _, path := range []string{certPath, keyPath} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return nil, errors.New("证书文件不是普通文件")
+		}
+	}
+	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
+		return nil, fmt.Errorf("证书和私钥不匹配: %w", err)
+	}
+	return []string{certPath, keyPath}, nil
+}
+
+func (m *CertificateManager) handleDownload(w http.ResponseWriter, r *http.Request) {
+	cert, ok := m.get(mux.Vars(r)["id"])
+	if !ok {
+		writeError(w, http.StatusNotFound, "证书不存在")
+		return
+	}
+	paths, err := m.secureCertificateFiles(cert)
+	if err != nil {
+		writeError(w, http.StatusConflict, "证书或私钥不可下载: "+err.Error())
+		return
+	}
+	certPEM, err := os.ReadFile(paths[0])
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	keyPEM, err := os.ReadFile(paths[1])
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	for _, file := range []struct {
+		name string
+		mode os.FileMode
+		data []byte
+	}{
+		{name: "cert.pem", mode: 0o644, data: certPEM},
+		{name: "key.pem", mode: 0o600, data: keyPEM},
+	} {
+		header := &zip.FileHeader{Name: file.name, Method: zip.Deflate}
+		header.SetMode(file.mode)
+		entry, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if _, err := entry.Write(file.data); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := zipWriter.Close(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=frp-cert-%s.zip", cert.ID))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(archive.Bytes())
 }
 
 func normalizeDomains(domains []string) []string {
@@ -626,24 +913,17 @@ func normalizeDomains(domains []string) []string {
 	return result
 }
 
-func certificateNotAfter(path string) (time.Time, error) {
-	b, err := os.ReadFile(path)
+func certificateNotAfter(certPath, keyPath string) (time.Time, error) {
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
 		return time.Time{}, err
 	}
-	for len(b) > 0 {
-		block, rest := pem.Decode(b)
-		if block == nil {
-			break
-		}
-		b = rest
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err == nil {
-			return cert.NotAfter, nil
-		}
+	if len(pair.Certificate) == 0 {
+		return time.Time{}, errors.New("证书链为空")
 	}
-	return time.Time{}, errors.New("无法解析签发证书")
+	cert, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cert.NotAfter, nil
 }

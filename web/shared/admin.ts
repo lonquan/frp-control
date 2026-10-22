@@ -224,19 +224,27 @@ export const adminAPI = {
   certificates: () => adminRequest<CertificateRecord[]>('/api/v2/certificates'),
   availableCertificates: () =>
     adminRequest<AvailableCertificate[]>('/api/v2/certificates/available'),
+  dnsProviders: () =>
+    adminRequest<DNSProviderDefinition[]>('/api/v2/certificates/dns-providers'),
+  dnsProviderConfig: () =>
+    adminRequest<DNSProviderConfig>('/api/v2/certificates/dns-provider'),
+  saveDNSProviderConfig: (
+    provider: string,
+    credentials: Record<string, string>,
+  ) =>
+    adminRequest<DNSProviderConfig>('/api/v2/certificates/dns-provider', {
+      method: 'PUT',
+      body: JSON.stringify({ provider, credentials }),
+    }),
+  clearDNSProviderConfig: () =>
+    adminRequest<void>('/api/v2/certificates/dns-provider', {
+      method: 'DELETE',
+    }),
   createCertificate: (certificate: CertificateInput) =>
     adminRequest<CertificateRecord>('/api/v2/certificates', {
       method: 'POST',
       body: JSON.stringify(certificate),
     }),
-  updateCertificate: (id: string, certificate: CertificateInput) =>
-    adminRequest<CertificateRecord>(
-      `/api/v2/certificates/${encodeURIComponent(id)}`,
-      {
-        method: 'PUT',
-        body: JSON.stringify(certificate),
-      },
-    ),
   deleteCertificate: (id: string) =>
     adminRequest<void>(`/api/v2/certificates/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -251,6 +259,13 @@ export const adminAPI = {
       `/api/v2/certificates/${encodeURIComponent(id)}/renew`,
       { method: 'POST', body: '{}' },
     ),
+  renewAllCertificates: () =>
+    adminRequest<RenewAllResult>('/api/v2/certificates/renew-all', {
+      method: 'POST',
+      body: '{}',
+    }),
+  downloadCertificate: (id: string) =>
+    adminBlob(`/api/v2/certificates/${encodeURIComponent(id)}/download`),
   captureSettings: () =>
     adminRequest<CaptureSettings>('/api/v2/captures/settings'),
   saveCaptureSettings: (settings: CaptureSettings) =>
@@ -352,6 +367,7 @@ export interface CertificateRecord {
   createdAt: string
   updatedAt: string
   lastIssueAt?: string
+  downloadable: boolean
 }
 
 export interface AvailableCertificate {
@@ -365,10 +381,39 @@ export interface AvailableCertificate {
   expiringSoon: boolean
 }
 
-export type CertificateInput = Omit<
+export type CertificateInput = Pick<
   CertificateRecord,
-  'id' | 'createdAt' | 'updatedAt' | 'lastIssueAt' | 'notAfter' | 'certPath' | 'keyPath' | 'lastError'
-> & { status?: string }
+  'name' | 'domains' | 'email' | 'caURL' | 'keyType'
+>
+
+export interface DNSProviderField {
+  name: string
+  label: string
+}
+
+export interface DNSProviderDefinition {
+  code: string
+  name: string
+  url?: string
+  fields?: DNSProviderField[]
+}
+
+export interface DNSProviderCredentialView extends DNSProviderField {
+  configured: boolean
+}
+
+export interface DNSProviderConfig {
+  configured: boolean
+  provider?: string
+  providerName?: string
+  credentials: DNSProviderCredentialView[]
+  updatedAt?: string
+}
+
+export interface RenewAllResult {
+  accepted: number
+  skipped: number
+}
 
 export interface CaptureSettings {
   enabled: boolean

@@ -4,7 +4,7 @@ NOWEB_TAG = $(shell [ ! -d web/frps/dist ] || [ ! -d web/frpc/dist ] && echo ',n
 FRP_VERSION ?=
 VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-.PHONY: web web-ci frps-web frpc-web frps frpc docker-build docker-build-cn docker-build-frps docker-build-frps-cn docker-build-frpc docker-build-frpc-cn docker-entrypoint-test
+.PHONY: web web-ci frps-web frpc-web frps frpc docker-build docker-build-cn docker-build-frps docker-build-frps-cn docker-build-frpc docker-build-frpc-cn docker-entrypoint-test generate-dns-providers check-dns-providers
 
 all: env fmt web build
 
@@ -61,7 +61,7 @@ frps:
 frpc:
 	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frpc$(NOWEB_TAG)" -o bin/frpc ./cmd/frpc
 
-test: gotest
+test: check-dns-providers gotest
 
 gotest:
 	go test -tags "$(NOWEB_TAG)" -v --cover ./assets/...
@@ -69,6 +69,13 @@ gotest:
 	go test -tags "$(NOWEB_TAG)" -v --cover ./client/...
 	go test -tags "$(NOWEB_TAG)" -v --cover ./server/...
 	go test -tags "$(NOWEB_TAG)" -v --cover ./pkg/...
+	cd cmd/frp-acme && go test -v --cover ./...
+
+generate-dns-providers:
+	cd cmd/frp-acme && go run ./cmd/generate-provider-registry
+
+check-dns-providers:
+	cd cmd/frp-acme && go run ./cmd/generate-provider-registry --check
 
 e2e: build
 	./hack/run-e2e.sh

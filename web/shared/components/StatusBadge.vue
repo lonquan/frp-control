@@ -15,18 +15,18 @@ const props = defineProps<{
 
 const state = computed(() => {
   const status = props.status.toLowerCase()
-  if (['running', 'online', 'active', 'ok', 'enabled'].includes(status)) {
+  if (['running', 'online', 'active', 'ok', 'enabled', 'valid'].includes(status)) {
     return 'success'
   }
   if (
-    ['starting', 'restarting', 'stopping', 'new', 'wait start', 'pending', 'checking'].includes(
+    ['starting', 'restarting', 'stopping', 'new', 'wait start', 'pending', 'checking', 'issuing'].includes(
       status,
     )
   ) {
     return 'warning'
   }
   if (
-    ['error', 'failed', 'offline', 'closed', 'unavailable', 'unexpected-exit'].includes(status)
+    ['error', 'failed', 'offline', 'closed', 'unavailable', 'unexpected-exit', 'expired'].includes(status)
   ) {
     return 'danger'
   }
@@ -44,6 +44,11 @@ const fallbackLabel = computed(() => {
     'start error': '启动失败',
     'check failed': '检查失败',
     active: '可用',
+    valid: '有效',
+    expired: '已过期',
+    issuing: '签发中',
+    pending: '待签发',
+    error: '失败',
     ok: '正常',
     checking: '检查中',
     starting: '启动中',
