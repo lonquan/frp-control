@@ -61,6 +61,13 @@ type providerField struct {
 	Label string `json:"label"`
 }
 
+type moduleDownload struct {
+	Path    string
+	Version string
+	Dir     string
+	Error   string
+}
+
 func main() {
 	output := flag.String("output", "../../pkg/admin/dns_providers_generated.json", "generated registry path")
 	check := flag.Bool("check", false, "check that the generated registry is current")
@@ -153,22 +160,24 @@ func generate() (*providerRegistry, error) {
 }
 
 func moduleInfo() (string, string, error) {
-	output, err := exec.Command(
-		"go",
-		"list",
-		"-m",
-		"-f",
-		"{{.Dir}}\t{{.Version}}",
-		legoModule,
-	).Output()
+	output, err := exec.Command("go", "mod", "download", "-json", legoModule).Output()
 	if err != nil {
-		return "", "", err
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", "", fmt.Errorf("download lego module: %w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", "", fmt.Errorf("download lego module: %w", err)
 	}
-	parts := strings.Split(strings.TrimSpace(string(output)), "\t")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("unexpected lego module information: %q", output)
+	var info moduleDownload
+	if err := json.Unmarshal(output, &info); err != nil {
+		return "", "", fmt.Errorf("parse lego module information: %w", err)
 	}
-	return parts[0], parts[1], nil
+	if info.Error != "" {
+		return "", "", fmt.Errorf("download lego module: %s", info.Error)
+	}
+	if info.Path != legoModule || info.Dir == "" || info.Version == "" {
+		return "", "", fmt.Errorf("unexpected lego module information: %+v", info)
+	}
+	return info.Dir, info.Version, nil
 }
 
 func compactStrings(values []string) []string {

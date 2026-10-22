@@ -133,6 +133,7 @@ func NewHTTPReverseProxy(option HTTPReverseProxyOptions, vhostRouter *Routers) *
 					return
 				}
 			}
+			setNotFoundHeaders(rw.Header())
 			rw.WriteHeader(http.StatusNotFound)
 			_, _ = rw.Write(getNotFoundPageContent())
 		},
