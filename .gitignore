@@ -1,0 +1,48 @@
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+
+# Folders
+_obj
+_test
+
+*.exe
+*.test
+*.prof
+
+# Self
+bin/
+packages/
+release/
+test/bin/
+vendor/
+lastversion/
+.cache/
+dist/
+.idea/
+.vscode/
+.DS_Store
+.autogen_ssh_key
+client.crt
+client.key
+
+node_modules/
+
+# Local Docker deployment state
+deploy/*/.env
+deploy/*/config/*
+!deploy/*/config/.gitkeep
+deploy/*/logs/*
+!deploy/*/logs/.gitkeep
+deploy/*/data/*
+!deploy/*/data/.gitkeep
+
+# Cache
+*.swp
+
+# AI
+.claude/
+.sisyphus/
+.superpowers/
+.codex/

@@ -1,0 +1,51 @@
+name: frp-client
+
+services:
+  frpc:
+    build:
+      context: ../..
+      dockerfile: dockerfiles/Dockerfile-for-frpc
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26-alpine}
+        ALPINE_IMAGE: ${ALPINE_IMAGE:-alpine:3.22}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.org}
+        APK_MIRROR: ${APK_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+        FRP_VERSION: ${FRP_VERSION:-}
+        VCS_REF: ${VCS_REF:-unknown}
+    image: frp-control-frpc:local
+    env_file:
+      - .env
+    ports:
+      - "${FRPC_DASHBOARD_PORT:-7400}:7400"
+    volumes:
+      - ./config:/etc/frp
+      - ./logs:/var/log/frp
+      - ./data:/var/lib/frp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /run:size=16m,mode=0755,uid=10001,gid=10001
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:7400/healthz || exit 1
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 20s

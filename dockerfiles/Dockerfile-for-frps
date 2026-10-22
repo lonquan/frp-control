@@ -1,0 +1,92 @@
+# syntax=docker/dockerfile:1.7
+ARG NODE_IMAGE=node:24-alpine
+ARG GO_IMAGE=golang:1.26-alpine
+ARG ALPINE_IMAGE=alpine:3.22
+ARG FRP_VERSION=""
+ARG VCS_REF=unknown
+
+FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS web
+
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+COPY web/shared/package.json ./shared/
+COPY web/frpc/package.json ./frpc/
+COPY web/frps/package.json ./frps/
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci \
+      --registry="${NPM_REGISTRY}" \
+      --replace-registry-host=always \
+      --fetch-retries=5
+COPY web/ ./
+RUN npm run build --workspace frps
+
+FROM --platform=${BUILDPLATFORM} ${GO_IMAGE} AS building
+
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOSUMDB=sum.golang.org
+ARG TARGETOS
+ARG TARGETARCH
+ARG FRP_VERSION
+ENV GOPROXY=$GOPROXY \
+    GOSUMDB=$GOSUMDB \
+    CGO_ENABLED=0 \
+    GOOS=$TARGETOS \
+    GOARCH=$TARGETARCH
+
+WORKDIR /building
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+COPY --from=web /src/web/frps/dist ./web/frps/dist
+RUN --mount=type=cache,target=/go/pkg/mod sh -c ' \
+    ldflags="-s -w"; \
+    if [ -n "$FRP_VERSION" ]; then \
+      ldflags="$ldflags -X github.com/fatedier/frp/pkg/util/version.distributionVersion=$FRP_VERSION"; \
+    fi; \
+    go build -trimpath -ldflags "$ldflags" -tags frps -o /out/frps ./cmd/frps'
+RUN --mount=type=cache,target=/go/pkg/mod go build -trimpath -ldflags "-s -w" -o /out/frp-supervisor ./cmd/frp-supervisor
+
+FROM ${ALPINE_IMAGE}
+
+ARG APK_MIRROR=https://dl-cdn.alpinelinux.org/alpine
+ARG FRP_VERSION=""
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="frp-control frps" \
+      org.opencontainers.image.description="frp server with session-authenticated management console" \
+      org.opencontainers.image.source="https://github.com/lonquan/frp-control" \
+      org.opencontainers.image.url="https://github.com/lonquan/frp-control" \
+      org.opencontainers.image.version="${FRP_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+RUN sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${APK_MIRROR}|g" /etc/apk/repositories \
+    && apk add --no-cache ca-certificates tzdata \
+    && addgroup -S -g 10001 frp \
+    && adduser -S -D -H -u 10001 -G frp frp \
+    && mkdir -p /etc/frp /var/lib/frp /var/log/frp /run/frp \
+    && chown -R frp:frp /etc/frp /var/lib/frp /var/log/frp /run/frp
+
+COPY --from=building /out/frps /usr/bin/frps
+COPY --from=building /out/frp-supervisor /usr/bin/frp-supervisor
+COPY dockerfiles/entrypoint.sh /usr/bin/frp-entrypoint
+
+RUN chmod 0755 /usr/bin/frps /usr/bin/frp-supervisor /usr/bin/frp-entrypoint
+
+ENV TZ=Asia/Shanghai \
+    FRP_CONFIG_ROOT=/etc/frp \
+    FRP_CONFIG_PATH=/etc/frp/frps.toml \
+    FRP_DATA_DIR=/var/lib/frp \
+    FRP_LOG_DIR=/var/log/frp \
+    FRP_SUPERVISOR_SOCKET=/run/frp/supervisor.sock
+
+USER frp
+WORKDIR /etc/frp
+VOLUME ["/etc/frp", "/var/lib/frp", "/var/log/frp"]
+EXPOSE 7000/tcp 7000/udp 8080 8443 7500
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:7500/healthz || exit 1
+ENTRYPOINT ["/usr/bin/frp-entrypoint", "frps"]
