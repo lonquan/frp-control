@@ -85,6 +85,12 @@ docker pull lonquan/frp-frps:v0.0.1
 docker pull lonquan/frp-frpc:v0.0.1
 ```
 
+国内网络也可以通过 DaoCloud 镜像加速拉取服务端镜像：
+
+```bash
+docker pull docker.m.daocloud.io/lonquan/frp-frps:v0.0.1
+```
+
 查看镜像中的分发版本和 frp 上游版本：
 
 ```bash
