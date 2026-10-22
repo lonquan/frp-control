@@ -35,6 +35,7 @@ type Manager struct {
 	clientCfg *v1.ClientCommonConfig
 	cfgs      map[string]v1.VisitorConfigurer
 	visitors  map[string]Visitor
+	statuses  map[string]*WorkingStatus
 	helper    Helper
 
 	checkInterval           time.Duration
@@ -63,6 +64,7 @@ func NewManager(
 		clientCfg:     clientCfg,
 		cfgs:          make(map[string]v1.VisitorConfigurer),
 		visitors:      make(map[string]Visitor),
+		statuses:      make(map[string]*WorkingStatus),
 		checkInterval: 10 * time.Second,
 		ctx:           ctx,
 		stopCh:        make(chan struct{}),
@@ -111,6 +113,9 @@ func (vm *Manager) Close() {
 	for _, v := range vm.visitors {
 		v.Close()
 	}
+	for _, status := range vm.statuses {
+		status.Status = PhaseClosed
+	}
 	select {
 	case <-vm.stopCh:
 	default:
@@ -122,16 +127,25 @@ func (vm *Manager) Close() {
 func (vm *Manager) startVisitor(cfg v1.VisitorConfigurer) (err error) {
 	xl := xlog.FromContextSafe(vm.ctx)
 	name := cfg.GetBaseConfig().Name
+	status := newWorkingStatus(cfg)
+	status.Status = PhaseStarting
+	vm.statuses[name] = status
 	visitor, err := NewVisitor(vm.ctx, cfg, vm.clientCfg, vm.helper)
 	if err != nil {
+		status.Status = PhaseStartError
+		status.Err = err.Error()
 		xl.Warnf("new visitor error: %v", err)
 		return
 	}
 	err = visitor.Run()
 	if err != nil {
+		status.Status = PhaseStartError
+		status.Err = err.Error()
 		xl.Warnf("start error: %v", err)
 	} else {
 		vm.visitors[name] = visitor
+		status.Status = PhaseRunning
+		status.Err = ""
 		xl.Infof("start visitor success")
 	}
 	return
@@ -167,6 +181,7 @@ func (vm *Manager) UpdateAll(cfgs []v1.VisitorConfigurer) {
 				visitor.Close()
 			}
 			delete(vm.visitors, name)
+			delete(vm.statuses, name)
 		}
 	}
 	if len(delNames) > 0 {
@@ -203,6 +218,19 @@ func (vm *Manager) GetVisitorCfg(name string) (v1.VisitorConfigurer, bool) {
 	defer vm.mu.RUnlock()
 	cfg, ok := vm.cfgs[name]
 	return cfg, ok
+}
+
+func (vm *Manager) GetAllVisitorStatus() []*WorkingStatus {
+	vm.mu.RLock()
+	defer vm.mu.RUnlock()
+
+	statuses := make([]*WorkingStatus, 0, len(vm.statuses))
+	for _, status := range vm.statuses {
+		if clone := cloneWorkingStatus(status); clone != nil {
+			statuses = append(statuses, clone)
+		}
+	}
+	return statuses
 }
 
 type visitorHelperImpl struct {

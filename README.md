@@ -161,7 +161,7 @@ secrets 和排障说明见 [deploy/README.md](deploy/README.md)。
 | -------------- | ------------------------------------------- |
 | `/etc/frp`     | 主配置、include 文件、配置历史              |
 | `/var/log/frp` | 文件日志                                    |
-| `/var/lib/frp` | 管理员会话、Store、证书、捕获记录和诊断设置 |
+| `/var/lib/frp` | 管理员会话、动态配置、证书、捕获记录和诊断设置 |
 
 ### 常用变量
 
@@ -185,7 +185,10 @@ secrets 和排障说明见 [deploy/README.md](deploy/README.md)。
 
 - frps 配置支持在线编辑、校验、历史恢复、保存重启和 Supervisor 回滚。
 - frpc 支持 `frpc.toml`、include 文件、代理、访问者和插件配置。
-- 可视化代理管理要求 `store.path` 指向可写的客户端数据文件。
+- 客户端代理和访问者页面分别展示运行状态与全部配置；状态列表在页面可见时每
+  10 秒自动刷新。
+- 动态配置只能在独立的 Store JSON 中启用/禁用，配置文件来源仍通过配置中心维护。
+- 可视化动态配置管理要求 `store.path` 指向可写的客户端数据文件。
 - 修改会切断面板连接的网络字段时，需要临时设置
   `FRP_ALLOW_DASHBOARD_NETWORK_CHANGES=1`。
 

@@ -22,11 +22,13 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fatedier/frp/client/configmgmt"
 	"github.com/fatedier/frp/client/http/model"
 	"github.com/fatedier/frp/client/proxy"
+	"github.com/fatedier/frp/client/visitor"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	httppkg "github.com/fatedier/frp/pkg/util/http"
 	"github.com/fatedier/frp/pkg/util/jsonx"
@@ -199,6 +201,65 @@ func (c *Controller) Status(ctx *httppkg.Context) (any, error) {
 	return res, nil
 }
 
+// ListProxyConfigs handles GET /api/config/proxies.
+func (c *Controller) ListProxyConfigs(ctx *httppkg.Context) (any, error) {
+	entries, err := c.manager.ListProxyConfigs()
+	if err != nil {
+		return nil, c.toHTTPError(err)
+	}
+
+	resp := model.ProxyConfigListResp{
+		Proxies: make([]model.ProxyConfigSummary, 0, len(entries)),
+	}
+	for _, entry := range entries {
+		resp.Proxies = append(resp.Proxies, c.buildProxyConfigSummary(entry))
+	}
+	slices.SortFunc(resp.Proxies, func(a, b model.ProxyConfigSummary) int {
+		if byName := cmp.Compare(a.Name, b.Name); byName != 0 {
+			return byName
+		}
+		return cmp.Compare(a.Source, b.Source)
+	})
+	return resp, nil
+}
+
+// ListVisitorConfigs handles GET /api/config/visitors.
+func (c *Controller) ListVisitorConfigs(ctx *httppkg.Context) (any, error) {
+	entries, err := c.manager.ListVisitorConfigs()
+	if err != nil {
+		return nil, c.toHTTPError(err)
+	}
+
+	resp := model.VisitorConfigListResp{
+		Visitors: make([]model.VisitorConfigSummary, 0, len(entries)),
+	}
+	for _, entry := range entries {
+		resp.Visitors = append(resp.Visitors, buildVisitorConfigSummary(entry))
+	}
+	slices.SortFunc(resp.Visitors, func(a, b model.VisitorConfigSummary) int {
+		if byName := cmp.Compare(a.Name, b.Name); byName != 0 {
+			return byName
+		}
+		return cmp.Compare(a.Source, b.Source)
+	})
+	return resp, nil
+}
+
+// ListVisitorStatus handles GET /api/visitors/status.
+func (c *Controller) ListVisitorStatus(ctx *httppkg.Context) (any, error) {
+	statuses := c.manager.GetVisitorStatus()
+	resp := model.VisitorStatusListResp{
+		Visitors: make([]model.VisitorStatusResp, 0, len(statuses)),
+	}
+	for _, status := range statuses {
+		resp.Visitors = append(resp.Visitors, buildVisitorStatusResp(status))
+	}
+	slices.SortFunc(resp.Visitors, func(a, b model.VisitorStatusResp) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+	return resp, nil
+}
+
 // GetConfig handles GET /api/config
 func (c *Controller) GetConfig(ctx *httppkg.Context) (any, error) {
 	content, err := c.manager.ReadConfigFile()
@@ -250,6 +311,92 @@ func (c *Controller) buildProxyStatusResp(status *proxy.WorkingStatus) model.Pro
 		psr.Source = model.SourceStore
 	}
 	return psr
+}
+
+func (c *Controller) buildProxyConfigSummary(entry configmgmt.ProxyConfigEntry) model.ProxyConfigSummary {
+	base := entry.Config.GetBaseConfig()
+	summary := model.ProxyConfigSummary{
+		Name:          base.Name,
+		Type:          base.Type,
+		Source:        entry.Source,
+		Enabled:       base.Enabled == nil || *base.Enabled,
+		Plugin:        base.Plugin.Type,
+		CertificateID: base.Metadatas[v1.CertificateIDMetadataKey],
+	}
+	if base.LocalPort != 0 {
+		summary.LocalAddr = net.JoinHostPort(base.LocalIP, strconv.Itoa(base.LocalPort))
+	}
+
+	switch cfg := entry.Config.(type) {
+	case *v1.TCPProxyConfig:
+		if cfg.RemotePort != 0 {
+			summary.RemoteAddr = net.JoinHostPort(c.serverAddr, strconv.Itoa(cfg.RemotePort))
+		}
+	case *v1.UDPProxyConfig:
+		if cfg.RemotePort != 0 {
+			summary.RemoteAddr = net.JoinHostPort(c.serverAddr, strconv.Itoa(cfg.RemotePort))
+		}
+	case *v1.HTTPProxyConfig:
+		summary.RemoteAddr = remoteDomain(cfg.CustomDomains, cfg.SubDomain)
+	case *v1.HTTPSProxyConfig:
+		summary.RemoteAddr = remoteDomain(cfg.CustomDomains, cfg.SubDomain)
+	case *v1.TCPMuxProxyConfig:
+		summary.RemoteAddr = remoteDomain(cfg.CustomDomains, cfg.SubDomain)
+	}
+	return summary
+}
+
+func buildVisitorConfigSummary(entry configmgmt.VisitorConfigEntry) model.VisitorConfigSummary {
+	base := entry.Config.GetBaseConfig()
+	bindAddr := base.BindAddr
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+	summary := model.VisitorConfigSummary{
+		Name:             base.Name,
+		Type:             base.Type,
+		Source:           entry.Source,
+		Enabled:          base.Enabled == nil || *base.Enabled,
+		SecretConfigured: base.SecretKey != "",
+		ServerUser:       base.ServerUser,
+		ServerName:       base.ServerName,
+		BindAddr:         bindAddr,
+		BindPort:         base.BindPort,
+		Plugin:           base.Plugin.Type,
+		UseEncryption:    base.Transport.UseEncryption,
+		UseCompression:   base.Transport.UseCompression,
+	}
+	if xtcp, ok := entry.Config.(*v1.XTCPVisitorConfig); ok {
+		summary.XTCPProtocol = xtcp.Protocol
+		summary.KeepTunnelOpen = xtcp.KeepTunnelOpen
+		summary.FallbackTo = xtcp.FallbackTo
+	}
+	return summary
+}
+
+func buildVisitorStatusResp(status *visitor.WorkingStatus) model.VisitorStatusResp {
+	bindAddr := status.BindAddr
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+	return model.VisitorStatusResp{
+		Name:       status.Name,
+		Type:       status.Type,
+		Status:     status.Status,
+		Err:        status.Err,
+		BindAddr:   bindAddr,
+		BindPort:   status.BindPort,
+		ServerUser: status.ServerUser,
+		ServerName: status.ServerName,
+		Plugin:     status.Plugin,
+	}
+}
+
+func remoteDomain(customDomains []string, subdomain string) string {
+	if len(customDomains) > 0 {
+		return strings.Join(customDomains, ", ")
+	}
+	return subdomain
 }
 
 // GetProxyConfig handles GET /api/proxy/{name}/config

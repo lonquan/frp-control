@@ -205,14 +205,14 @@ docker volume create frps-data
 | -------------- | ------------------------------------------- |
 | `/etc/frp`     | TOML 主配置、include 配置、配置版本         |
 | `/var/log/frp` | frps/frpc 文件日志                          |
-| `/var/lib/frp` | 管理员会话、证书、捕获记录、Store、诊断设置 |
+| `/var/lib/frp` | 管理员会话、证书、捕获记录、动态配置、诊断设置 |
 
 配置必须挂载整个目录，不能只挂载单个 TOML 文件。面板需要原子替换配置并创建 include 文件。
 
 首次启动时，如果配置目录为空，容器会生成最小配置：
 
 - frps：监听 7000，HTTP Vhost 8080，HTTPS Vhost 8443，面板 7500。
-- frpc：面板 7400，Store 启用，登录失败后保持面板可用。
+- frpc：面板 7400，动态配置启用，登录失败后保持面板可用。
 
 配置目录为空时必须提供 `FRP_AUTH_TOKEN`；认证文件
 `/var/lib/frp/admin/auth.json` 不存在时必须提供 `FRP_ADMIN_PASSWORD` 或
@@ -416,13 +416,16 @@ FRP_ALLOW_DASHBOARD_NETWORK_CHANGES=1
 
 以及全部访问者和客户端插件。每种类型均可从表单选择，也可以直接编辑 TOML。
 
-可视化创建依赖 Store。首次生成的 frpc 配置已经启用：
+可视化创建依赖底层 Store。面板中将其称为“动态配置”，首次生成的 frpc 配置已经启用：
 
 ```toml
 store.path = "/var/lib/frp/frpc_store.json"
 ```
 
-如果使用已有配置，请保留或增加 Store 配置。
+如果使用已有配置，请保留或增加 Store 配置段。
+
+代理和访问者页面均分为“状态”和“配置”两个列表。上方状态只展示运行实例，
+下方配置包含配置文件和动态配置；动态配置行可直接启停，文件配置需前往配置中心修改。
 
 ### TCP/UDP 6000 端口
 

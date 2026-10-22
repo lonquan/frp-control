@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatedier/frp/client/configmgmt"
 	"github.com/fatedier/frp/client/proxy"
+	"github.com/fatedier/frp/client/visitor"
 	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/config/source"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
@@ -97,6 +98,66 @@ func (m *serviceConfigManager) WriteConfigFile(content []byte) error {
 
 func (m *serviceConfigManager) GetProxyStatus() []*proxy.WorkingStatus {
 	return m.svr.getAllProxyStatus()
+}
+
+func (m *serviceConfigManager) GetVisitorStatus() []*visitor.WorkingStatus {
+	return m.svr.getAllVisitorStatus()
+}
+
+func (m *serviceConfigManager) ListProxyConfigs() ([]configmgmt.ProxyConfigEntry, error) {
+	m.svr.reloadMu.Lock()
+	defer m.svr.reloadMu.Unlock()
+
+	entries := make([]configmgmt.ProxyConfigEntry, 0)
+	if m.svr.configSource != nil {
+		for _, cfg := range m.svr.configSource.GetAllProxies() {
+			entries = append(entries, configmgmt.ProxyConfigEntry{
+				Config: cfg,
+				Source: configmgmt.ConfigSourceFile,
+			})
+		}
+	}
+	if m.svr.storeSource != nil {
+		storeProxies, err := m.svr.storeSource.GetAllProxies()
+		if err != nil {
+			return nil, err
+		}
+		for _, cfg := range storeProxies {
+			entries = append(entries, configmgmt.ProxyConfigEntry{
+				Config: cfg,
+				Source: configmgmt.ConfigSourceStore,
+			})
+		}
+	}
+	return entries, nil
+}
+
+func (m *serviceConfigManager) ListVisitorConfigs() ([]configmgmt.VisitorConfigEntry, error) {
+	m.svr.reloadMu.Lock()
+	defer m.svr.reloadMu.Unlock()
+
+	entries := make([]configmgmt.VisitorConfigEntry, 0)
+	if m.svr.configSource != nil {
+		for _, cfg := range m.svr.configSource.GetAllVisitors() {
+			entries = append(entries, configmgmt.VisitorConfigEntry{
+				Config: cfg,
+				Source: configmgmt.ConfigSourceFile,
+			})
+		}
+	}
+	if m.svr.storeSource != nil {
+		storeVisitors, err := m.svr.storeSource.GetAllVisitors()
+		if err != nil {
+			return nil, err
+		}
+		for _, cfg := range storeVisitors {
+			entries = append(entries, configmgmt.VisitorConfigEntry{
+				Config: cfg,
+				Source: configmgmt.ConfigSourceStore,
+			})
+		}
+	}
+	return entries, nil
 }
 
 func (m *serviceConfigManager) GetProxyConfig(name string) (v1.ProxyConfigurer, bool) {

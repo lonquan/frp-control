@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/require"
 
 	"github.com/fatedier/frp/client/configmgmt"
 	"github.com/fatedier/frp/client/http/model"
 	"github.com/fatedier/frp/client/proxy"
+	"github.com/fatedier/frp/client/visitor"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	httppkg "github.com/fatedier/frp/pkg/util/http"
 )
@@ -24,10 +26,13 @@ type fakeConfigManager struct {
 	readConfigFileFn      func() (string, error)
 	writeConfigFileFn     func(content []byte) error
 	getProxyStatusFn      func() []*proxy.WorkingStatus
+	getVisitorStatusFn    func() []*visitor.WorkingStatus
 	isStoreProxyEnabledFn func(name string) bool
 	storeEnabledFn        func() bool
 	getProxyConfigFn      func(name string) (v1.ProxyConfigurer, bool)
 	getVisitorConfigFn    func(name string) (v1.VisitorConfigurer, bool)
+	listProxyConfigsFn    func() ([]configmgmt.ProxyConfigEntry, error)
+	listVisitorConfigsFn  func() ([]configmgmt.VisitorConfigEntry, error)
 
 	listStoreProxiesFn  func() ([]v1.ProxyConfigurer, error)
 	getStoreProxyFn     func(name string) (v1.ProxyConfigurer, error)
@@ -68,6 +73,27 @@ func (m *fakeConfigManager) GetProxyStatus() []*proxy.WorkingStatus {
 		return m.getProxyStatusFn()
 	}
 	return nil
+}
+
+func (m *fakeConfigManager) GetVisitorStatus() []*visitor.WorkingStatus {
+	if m.getVisitorStatusFn != nil {
+		return m.getVisitorStatusFn()
+	}
+	return nil
+}
+
+func (m *fakeConfigManager) ListProxyConfigs() ([]configmgmt.ProxyConfigEntry, error) {
+	if m.listProxyConfigsFn != nil {
+		return m.listProxyConfigsFn()
+	}
+	return nil, nil
+}
+
+func (m *fakeConfigManager) ListVisitorConfigs() ([]configmgmt.VisitorConfigEntry, error) {
+	if m.listVisitorConfigsFn != nil {
+		return m.listVisitorConfigsFn()
+	}
+	return nil, nil
 }
 
 func (m *fakeConfigManager) IsStoreProxyEnabled(name string) bool {
@@ -184,6 +210,99 @@ func newRawTCPProxyConfig(name string) *v1.TCPProxyConfig {
 			},
 		},
 	}
+}
+
+func TestListProxyConfigsIncludesAllSourcesAndDisabledEntries(t *testing.T) {
+	disabled := false
+	fileProxy := newRawTCPProxyConfig("shared")
+	fileProxy.Enabled = &disabled
+	fileProxy.LocalPort = 22
+	fileProxy.RemotePort = 6000
+	storeProxy := newRawTCPProxyConfig("store-only")
+	storeProxy.LocalIP = "127.0.0.1"
+	storeProxy.LocalPort = 8080
+	storeProxy.RemotePort = 0
+
+	controller := &Controller{
+		serverAddr: "frps.example.com",
+		manager: &fakeConfigManager{
+			listProxyConfigsFn: func() ([]configmgmt.ProxyConfigEntry, error) {
+				return []configmgmt.ProxyConfigEntry{
+					{Config: storeProxy, Source: configmgmt.ConfigSourceStore},
+					{Config: fileProxy, Source: configmgmt.ConfigSourceFile},
+				}, nil
+			},
+		},
+	}
+
+	resp, err := controller.ListProxyConfigs(httppkg.NewContext(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/config/proxies", nil)))
+	require.NoError(t, err)
+	payload := resp.(model.ProxyConfigListResp)
+	require.Len(t, payload.Proxies, 2)
+	require.Equal(t, "shared", payload.Proxies[0].Name)
+	require.False(t, payload.Proxies[0].Enabled)
+	require.Equal(t, model.SourceConfig, payload.Proxies[0].Source)
+	require.Equal(t, "frps.example.com:6000", payload.Proxies[0].RemoteAddr)
+	require.Equal(t, "store-only", payload.Proxies[1].Name)
+	require.Equal(t, model.SourceStore, payload.Proxies[1].Source)
+}
+
+func TestListVisitorConfigsAndStatusesOmitSecretKey(t *testing.T) {
+	cfg := &v1.XTCPVisitorConfig{
+		VisitorBaseConfig: v1.VisitorBaseConfig{
+			Name:       "visitor",
+			Type:       "xtcp",
+			SecretKey:  "top-secret",
+			ServerName: "server",
+			BindPort:   -1,
+			Transport: v1.VisitorTransport{
+				UseEncryption:  true,
+				UseCompression: true,
+			},
+		},
+		Protocol:       "kcp",
+		KeepTunnelOpen: true,
+		FallbackTo:     "fallback",
+	}
+	controller := &Controller{
+		manager: &fakeConfigManager{
+			listVisitorConfigsFn: func() ([]configmgmt.VisitorConfigEntry, error) {
+				return []configmgmt.VisitorConfigEntry{
+					{Config: cfg, Source: configmgmt.ConfigSourceStore},
+				}, nil
+			},
+			getVisitorStatusFn: func() []*visitor.WorkingStatus {
+				return []*visitor.WorkingStatus{{
+					Name:       "visitor",
+					Type:       "xtcp",
+					Status:     visitor.PhaseRunning,
+					BindAddr:   "127.0.0.1",
+					BindPort:   -1,
+					ServerName: "server",
+				}}
+			},
+		},
+	}
+
+	configResp, err := controller.ListVisitorConfigs(httppkg.NewContext(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/config/visitors", nil)))
+	require.NoError(t, err)
+	configPayload := configResp.(model.VisitorConfigListResp)
+	require.True(t, configPayload.Visitors[0].SecretConfigured)
+	require.Equal(t, "kcp", configPayload.Visitors[0].XTCPProtocol)
+	require.True(t, configPayload.Visitors[0].KeepTunnelOpen)
+	require.Equal(t, "fallback", configPayload.Visitors[0].FallbackTo)
+
+	statusResp, err := controller.ListVisitorStatus(httppkg.NewContext(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/visitors/status", nil)))
+	require.NoError(t, err)
+	statusPayload := statusResp.(model.VisitorStatusListResp)
+	require.Equal(t, visitor.PhaseRunning, statusPayload.Visitors[0].Status)
+
+	encoded, err := json.Marshal(struct {
+		Configs  model.VisitorConfigListResp
+		Statuses model.VisitorStatusListResp
+	}{configPayload, statusPayload})
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "top-secret")
 }
 
 func TestBuildProxyStatusRespStoreSourceEnabled(t *testing.T) {

@@ -2,14 +2,14 @@
   <div class="page-stack">
     <PageHeader
       title="代理"
-      description="查看运行状态或管理 Store 中的代理配置。"
+      description="查看当前代理状态，并在同一页面管理配置文件和动态配置。"
       eyebrow="PROXIES"
     >
-      <a-button :loading="loading" @click="load">
+      <a-button :loading="loading" @click="loadAll(true)">
         <template #icon><IconRefresh /></template>
         刷新
       </a-button>
-      <a-tooltip :disabled="storeEnabled" content="请先在 FRPC 配置中启用 Store">
+      <a-tooltip :disabled="storeEnabled" content="请先在 FRPC 配置中启用动态配置">
         <a-button
           type="primary"
           :disabled="!storeEnabled"
@@ -24,70 +24,70 @@
     <a-alert
       v-if="!storeEnabled"
       type="warning"
-      :show-icon="true"
-      title="Store 当前未启用"
+      show-icon
+      title="动态配置当前未启用"
     >
-      可视化创建和编辑依赖 Store。请在主配置中加入
-      <code>[store] path = "./frpc_store.json"</code>，或通过配置中心开启。
+      文件配置仍可查看。若要通过面板创建动态配置，请在主配置中加入
+      <code>[store] path = "./frpc_store.json"</code>。
+    </a-alert>
+    <a-alert v-if="statusError" type="error" show-icon title="代理状态加载失败">
+      {{ statusError }}
+    </a-alert>
+    <a-alert v-if="configError" type="error" show-icon title="代理配置加载失败">
+      {{ configError }}
     </a-alert>
 
-    <a-form :model="filters" class="filter-panel" layout="vertical" @submit="applyFilters">
-      <div class="filter-grid">
-        <a-form-item label="搜索">
-          <a-input v-model="filters.q" placeholder="代理名称、本地或远程地址" allow-clear>
+    <section class="table-panel" aria-labelledby="proxy-status-title">
+      <div class="table-toolbar directory-toolbar">
+        <div class="table-toolbar-copy">
+          <strong id="proxy-status-title">代理状态</strong>
+          <span>当前显示 {{ filteredStatus.length }} 个运行实例</span>
+        </div>
+        <div class="toolbar-filters">
+          <a-input
+            v-model="statusFilters.q"
+            allow-clear
+            placeholder="搜索名称或地址"
+          >
             <template #prefix><IconSearch /></template>
           </a-input>
-        </a-form-item>
-        <a-form-item label="类型">
-          <a-select v-model="filters.type" allow-clear placeholder="全部类型">
+          <a-select
+            v-model="statusFilters.type"
+            allow-clear
+            placeholder="全部类型"
+          >
             <a-option v-for="type in PROXY_TYPES" :key="type" :value="type">
               {{ type.toUpperCase() }}
             </a-option>
           </a-select>
-        </a-form-item>
-        <a-form-item label="状态">
-          <a-select v-model="filters.status" allow-clear placeholder="全部状态">
+          <a-select
+            v-model="statusFilters.status"
+            allow-clear
+            placeholder="全部状态"
+          >
             <a-option value="running">运行中</a-option>
+            <a-option value="wait start">等待启动</a-option>
             <a-option value="start error">启动失败</a-option>
             <a-option value="closed">已关闭</a-option>
-            <a-option value="wait start">等待启动</a-option>
           </a-select>
-        </a-form-item>
-        <div class="filter-actions">
-          <a-button type="primary" html-type="submit">查询</a-button>
-          <a-button @click="resetFilters">重置</a-button>
         </div>
-      </div>
-    </a-form>
-
-    <section class="table-panel">
-      <div class="table-toolbar">
-        <div class="table-toolbar-copy">
-          <strong>代理列表</strong>
-          <span>共 {{ filteredStatus.length }} 个运行代理，{{ filteredStore.length }} 个 Store 代理</span>
-        </div>
-        <a-radio-group v-model="activeView" type="button">
-          <a-radio value="status">运行状态</a-radio>
-          <a-radio value="store">Store 配置</a-radio>
-        </a-radio-group>
       </div>
 
       <a-table
-        v-if="activeView === 'status'"
         :data="filteredStatus"
-        :loading="loading"
+        :loading="statusLoading"
         :pagination="false"
         row-key="name"
         size="large"
-        :scroll="{ x: 1280 }"
-        @row-click="openDetail"
+        :scroll="{ x: 1180 }"
+        @row-click="openStatusDetail"
       >
         <template #columns>
-          <a-table-column title="代理" :width="220">
+          <a-table-column title="代理" :width="210">
             <template #cell="{ record }">
               <div class="row-primary">
                 <strong>{{ record.name }}</strong>
-                <span>{{ record.source === 'store' ? 'Store' : '配置文件' }}</span>
+                <span>{{ sourceLabel(record.source) }}</span>
               </div>
             </template>
           </a-table-column>
@@ -101,7 +101,7 @@
               <StatusBadge :status="record.status" />
             </template>
           </a-table-column>
-          <a-table-column title="本地地址" :width="190">
+          <a-table-column title="本地地址" :width="180">
             <template #cell="{ record }">
               <span class="mono">{{ record.local_addr || '-' }}</span>
             </template>
@@ -112,12 +112,7 @@
             </template>
           </a-table-column>
           <a-table-column title="插件" data-index="plugin" :width="130" />
-          <a-table-column title="证书" :width="180">
-            <template #cell="{ record }">
-              <span>{{ certificateLabel(record.certificate_id) }}</span>
-            </template>
-          </a-table-column>
-          <a-table-column title="错误" :width="260">
+          <a-table-column title="错误" :width="250">
             <template #cell="{ record }">
               <a-tooltip v-if="record.err" :content="record.err">
                 <span class="error-text">{{ record.err }}</span>
@@ -127,76 +122,141 @@
           </a-table-column>
           <a-table-column title="操作" :width="90" fixed="right">
             <template #cell="{ record }">
-              <a-button type="text" @click.stop="openDetail(record)">详情</a-button>
+              <a-button type="text" @click.stop="openStatusDetail(record)">详情</a-button>
             </template>
           </a-table-column>
         </template>
         <template #empty>
           <div class="empty-state">
             <div class="empty-icon"><IconLink /></div>
-            <strong>暂无运行代理</strong>
-            <p>代理会在配置生效或 Store 条目启用后显示。</p>
+            <strong>暂无代理运行实例</strong>
+            <p>启用的代理会在配置生效后显示；启动失败时会保留错误信息。</p>
           </div>
         </template>
       </a-table>
+    </section>
+
+    <section class="table-panel" aria-labelledby="proxy-config-title">
+      <div class="table-toolbar directory-toolbar">
+        <div class="table-toolbar-copy">
+          <strong id="proxy-config-title">代理配置</strong>
+          <span>共 {{ filteredConfig.length }} 个配置，动态配置优先于同名文件配置</span>
+        </div>
+        <div class="toolbar-filters">
+          <a-input
+            v-model="configFilters.q"
+            allow-clear
+            placeholder="搜索配置名称"
+          >
+            <template #prefix><IconSearch /></template>
+          </a-input>
+          <a-select
+            v-model="configFilters.type"
+            allow-clear
+            placeholder="全部类型"
+          >
+            <a-option v-for="type in PROXY_TYPES" :key="type" :value="type">
+              {{ type.toUpperCase() }}
+            </a-option>
+          </a-select>
+          <a-select
+            v-model="configFilters.source"
+            allow-clear
+            placeholder="全部来源"
+          >
+            <a-option value="store">动态配置</a-option>
+            <a-option value="config">配置文件</a-option>
+          </a-select>
+          <a-select
+            v-model="configFilters.enabled"
+            allow-clear
+            placeholder="全部配置状态"
+          >
+            <a-option value="enabled">已启用</a-option>
+            <a-option value="disabled">已禁用</a-option>
+          </a-select>
+        </div>
+      </div>
 
       <a-table
-        v-else
-        :data="filteredStore"
-        :loading="loading"
+        :data="filteredConfig"
+        :loading="configLoading"
         :pagination="false"
-        row-key="name"
+        row-key="key"
         size="large"
-        :scroll="{ x: 1220 }"
-        @row-click="openDetail"
+        :scroll="{ x: 1180 }"
+        @row-click="openConfigDetail"
       >
         <template #columns>
-          <a-table-column title="代理" :width="230">
+          <a-table-column title="代理" :width="220">
             <template #cell="{ record }">
               <div class="row-primary">
                 <strong>{{ record.name }}</strong>
-                <span>{{ record.enabled ? '已启用' : '已禁用' }}</span>
+                <span>{{ sourceLabel(record.source) }}</span>
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="类型" :width="105">
+          <a-table-column title="类型" :width="100">
             <template #cell="{ record }">
               <a-tag color="arcoblue">{{ record.type.toUpperCase() }}</a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="本地服务" :width="220">
+          <a-table-column title="配置状态" :width="125">
             <template #cell="{ record }">
-              <span class="mono">{{ localLabel(record) }}</span>
+              <a-tag :color="record.enabled ? 'green' : 'gray'">
+                {{ record.enabled ? '已启用' : '已禁用' }}
+              </a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="远程端口/域名" :width="220">
+          <a-table-column title="本地服务" :width="190">
             <template #cell="{ record }">
-              <span class="mono">{{ remoteLabel(record) }}</span>
+              <span class="mono">{{ record.local_addr || '-' }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="插件" :width="150">
-            <template #cell="{ record }">{{ pluginLabel(record) }}</template>
-          </a-table-column>
-          <a-table-column title="证书" :width="180">
+          <a-table-column title="远程端口/域名" :width="210">
             <template #cell="{ record }">
-              <span>{{ certificateLabel(record.certificateId) }}</span>
+              <span class="mono">{{ record.remote_addr || '-' }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="270" fixed="right">
+          <a-table-column title="插件" :width="130">
+            <template #cell="{ record }">{{ record.plugin || '无' }}</template>
+          </a-table-column>
+          <a-table-column title="证书" :width="170">
             <template #cell="{ record }">
-              <div class="table-actions">
+              <span>{{ certificateLabel(record.certificate_id) }}</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="操作" :width="260" fixed="right">
+            <template #cell="{ record }">
+              <div class="table-actions" @click.stop>
                 <a-switch
+                  v-if="record.source === 'store'"
                   :model-value="record.enabled"
+                  :loading="togglingNames.has(record.key)"
                   size="small"
+                  :aria-label="`${record.enabled ? '禁用' : '启用'}代理 ${record.name}`"
                   @change="(value: string | number | boolean) => toggle(record, Boolean(value))"
-                  @click.stop
                 />
-                <a-button type="text" @click.stop="openEdit(record)">编辑</a-button>
-                <a-popconfirm
-                  content="确认删除此 Store 代理？"
-                  @ok="remove(record)"
+                <a-button
+                  v-if="record.definition"
+                  type="text"
+                  @click="openEdit(record.definition)"
                 >
-                  <a-button type="text" status="danger" @click.stop>删除</a-button>
+                  编辑
+                </a-button>
+                <a-button
+                  v-if="record.source === 'config'"
+                  type="text"
+                  @click="openConfigCenter"
+                >
+                  打开配置中心
+                </a-button>
+                <a-popconfirm
+                  v-if="record.definition"
+                  content="确认删除此动态配置？"
+                  @ok="remove(record.definition)"
+                >
+                  <a-button type="text" status="danger">删除</a-button>
                 </a-popconfirm>
               </div>
             </template>
@@ -205,8 +265,8 @@
         <template #empty>
           <div class="empty-state">
             <div class="empty-icon"><IconLink /></div>
-            <strong>暂无 Store 代理</strong>
-            <p>点击“新建代理”创建 Store 条目。</p>
+            <strong>暂无代理配置</strong>
+            <p>配置文件代理和动态配置代理都会显示在这里。</p>
           </div>
         </template>
       </a-table>
@@ -218,25 +278,55 @@
       :width="720"
       unmount-on-close
     >
-      <div v-if="selectedStatus" class="detail-sections">
-        <div class="detail-section">
-          <h3>运行状态</h3>
+      <div class="detail-sections">
+        <div v-if="selectedConfig" class="detail-section">
+          <h3>配置信息</h3>
           <div class="detail-grid">
             <div class="detail-item">
               <span>代理名称</span>
-              <strong>{{ selectedStatus.name }}</strong>
+              <strong>{{ selectedConfig.name }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>来源</span>
+              <strong>{{ sourceLabel(selectedConfig.source) }}</strong>
             </div>
             <div class="detail-item">
               <span>类型</span>
-              <strong>{{ selectedStatus.type.toUpperCase() }}</strong>
+              <strong>{{ selectedConfig.type.toUpperCase() }}</strong>
             </div>
+            <div class="detail-item">
+              <span>配置状态</span>
+              <strong>{{ selectedConfig.enabled ? '已启用' : '已禁用' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>本地服务</span>
+              <strong class="mono">{{ selectedConfig.local_addr || '-' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>远程端口/域名</span>
+              <strong class="mono">{{ selectedConfig.remote_addr || '-' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>插件</span>
+              <strong>{{ selectedConfig.plugin || '无' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>证书</span>
+              <strong>{{ certificateLabel(selectedConfig.certificate_id) }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h3>运行状态</h3>
+          <div v-if="selectedStatus" class="detail-grid">
             <div class="detail-item">
               <span>状态</span>
               <StatusBadge :status="selectedStatus.status" />
             </div>
             <div class="detail-item">
-              <span>来源</span>
-              <strong>{{ selectedStatus.source === 'store' ? 'Store' : '配置文件' }}</strong>
+              <span>运行类型</span>
+              <strong>{{ selectedStatus.type.toUpperCase() }}</strong>
             </div>
             <div class="detail-item">
               <span>本地地址</span>
@@ -246,43 +336,48 @@
               <span>远程地址</span>
               <strong class="mono">{{ selectedStatus.remote_addr || '-' }}</strong>
             </div>
-            <div class="detail-item">
-              <span>插件</span>
-              <strong>{{ selectedStatus.plugin || '无' }}</strong>
-            </div>
-            <div class="detail-item">
+            <div class="detail-item span-2">
               <span>错误</span>
               <strong>{{ selectedStatus.err || '无' }}</strong>
             </div>
-            <div
-              v-if="certificateRecord(selectedStatus.certificate_id)"
-              class="detail-item span-2"
-            >
-              <span>托管证书</span>
-              <strong>
-                {{ certificateRecord(selectedStatus.certificate_id)?.name }}
-                ·
-                {{ certificateRecord(selectedStatus.certificate_id)?.status }}
-                ·
-                {{ certificateRecord(selectedStatus.certificate_id)?.notAfter || '未签发' }}
-              </strong>
-            </div>
           </div>
+          <a-alert v-else type="info" show-icon>
+            当前没有对应的运行实例，配置可能已禁用、等待客户端连接或尚未加载。
+          </a-alert>
         </div>
       </div>
+      <template #footer>
+        <a-space>
+          <a-button @click="detailVisible = false">关闭</a-button>
+          <a-button
+            v-if="selectedConfig?.source === 'config'"
+            type="primary"
+            @click="openConfigCenter"
+          >
+            打开配置中心
+          </a-button>
+          <a-button
+            v-else-if="selectedConfig?.definition"
+            type="primary"
+            @click="openEdit(selectedConfig.definition)"
+          >
+            编辑动态配置
+          </a-button>
+        </a-space>
+      </template>
     </a-drawer>
 
     <ProxyEditor
       :visible="editorVisible"
       :initial="editingProxy"
       @close="editorVisible = false"
-      @saved="load"
+      @saved="loadAll(false)"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import {
@@ -301,90 +396,302 @@ import StatusBadge from '@shared/components/StatusBadge.vue'
 import ProxyEditor from '../components/ProxyEditor.vue'
 import {
   PROXY_TYPES,
+  isStoreProxyEnabled,
+  type ProxyConfigSummary,
   type ProxyDefinition,
   type ProxyStatus,
   type StatusResponse,
 } from '../types'
 
+interface ProxyConfigRow extends ProxyConfigSummary {
+  key: string
+  definition?: ProxyDefinition
+}
+
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+const statusLoading = ref(false)
+const configLoading = ref(false)
+const statusError = ref('')
+const configError = ref('')
 const statuses = ref<ProxyStatus[]>([])
+const configSummaries = ref<ProxyConfigSummary[]>([])
 const storeProxies = ref<ProxyDefinition[]>([])
 const certificates = ref<CertificateRecord[]>([])
 const storeEnabled = ref(true)
-const activeView = ref<'status' | 'store'>('status')
-const filters = reactive({ q: '', type: '', status: '' })
+const togglingNames = ref(new Set<string>())
+const statusFilters = reactive({ q: '', type: '', status: '' })
+const configFilters = reactive({
+  q: '',
+  type: '',
+  source: '',
+  enabled: '',
+})
 const detailVisible = ref(false)
 const selectedStatus = ref<ProxyStatus>()
+const selectedConfig = ref<ProxyConfigRow>()
 const editorVisible = ref(false)
 const editingProxy = ref<ProxyDefinition | null>(null)
 
-const filteredStatus = computed(() => filterStatus(statuses.value))
-const filteredStore = computed(() => filterStore(storeProxies.value))
+let statusTimer: number | undefined
+
+const storeProxyMap = computed(
+  () => new Map(storeProxies.value.map((proxy) => [proxy.name, proxy])),
+)
+
+const configRows = computed<ProxyConfigRow[]>(() =>
+  configSummaries.value.map((summary) => ({
+    ...summary,
+    key: `${summary.source}:${summary.name}`,
+    definition:
+      summary.source === 'store'
+        ? storeProxyMap.value.get(summary.name)
+        : undefined,
+  })),
+)
+
+const filteredStatus = computed(() => {
+  const q = statusFilters.q.toLowerCase().trim()
+  return statuses.value.filter((status) => {
+    if (statusFilters.type && status.type !== statusFilters.type) return false
+    if (statusFilters.status && status.status !== statusFilters.status) {
+      return false
+    }
+    if (!q) return true
+    return [status.name, status.local_addr, status.remote_addr, status.plugin]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(q))
+  })
+})
+
+const filteredConfig = computed(() => {
+  const q = configFilters.q.toLowerCase().trim()
+  return configRows.value.filter((config) => {
+    if (configFilters.type && config.type !== configFilters.type) return false
+    if (configFilters.source && config.source !== configFilters.source) {
+      return false
+    }
+    if (
+      configFilters.enabled === 'enabled' &&
+      !config.enabled
+    ) {
+      return false
+    }
+    if (
+      configFilters.enabled === 'disabled' &&
+      config.enabled
+    ) {
+      return false
+    }
+    return !q || config.name.toLowerCase().includes(q)
+  })
+})
 
 onMounted(async () => {
-  await load()
+  await loadAll(true)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  statusTimer = window.setInterval(refreshStatusWhenVisible, 10_000)
   if (route.query.create === '1') {
     openCreate()
     await router.replace({ query: {} })
   }
 })
 
-watch(activeView, () => {
-  filters.q = ''
-  filters.type = ''
-  filters.status = ''
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  if (statusTimer !== undefined) {
+    window.clearInterval(statusTimer)
+  }
 })
 
-async function load() {
-  loading.value = true
+async function loadAll(showLoading: boolean) {
+  if (showLoading) loading.value = true
   try {
-    const status = await legacyRequest<StatusResponse>('/api/status')
-    statuses.value = Object.values(status)
-      .flat()
-      .sort((a, b) => a.name.localeCompare(b.name))
-    try {
-      const store = await legacyRequest<{ proxies: ProxyDefinition[] }>(
-        '/api/store/proxies',
-      )
-      storeProxies.value = store.proxies
-      storeEnabled.value = true
-    } catch {
-      storeProxies.value = []
-      storeEnabled.value = false
-    }
-    try {
-      certificates.value = await adminAPI.certificates()
-    } catch {
-      certificates.value = []
-    }
-  } catch (error) {
-    Message.error(error instanceof Error ? error.message : '加载代理失败')
+    await Promise.all([loadStatus(showLoading), loadConfigs(showLoading)])
   } finally {
-    loading.value = false
+    if (showLoading) loading.value = false
   }
 }
 
-function filterStatus(items: ProxyStatus[]) {
-  const q = filters.q.toLowerCase().trim()
-  return items.filter((item) => {
-    if (filters.type && item.type !== filters.type) return false
-    if (filters.status && item.status !== filters.status) return false
-    if (!q) return true
-    return [item.name, item.local_addr, item.remote_addr, item.plugin]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(q))
+async function loadStatus(showLoading: boolean) {
+  if (showLoading) statusLoading.value = true
+  try {
+    const response = await legacyRequest<StatusResponse>('/api/status')
+    statuses.value = Object.values(response)
+      .flat()
+      .sort((a, b) => a.name.localeCompare(b.name))
+    statusError.value = ''
+  } catch (error) {
+    statusError.value =
+      error instanceof Error ? error.message : '加载代理状态失败'
+  } finally {
+    if (showLoading) statusLoading.value = false
+  }
+}
+
+async function loadConfigs(showLoading: boolean) {
+  if (showLoading) configLoading.value = true
+  try {
+    const [summaryResult, storeResult, certificateResult] =
+      await Promise.allSettled([
+        legacyRequest<{ proxies: ProxyConfigSummary[] }>('/api/config/proxies'),
+        legacyRequest<{ proxies: ProxyDefinition[] }>('/api/store/proxies'),
+        adminAPI.certificates(),
+      ])
+
+    if (summaryResult.status === 'fulfilled') {
+      configSummaries.value = summaryResult.value.proxies
+      configError.value = ''
+    } else {
+      configError.value = errorMessage(
+        summaryResult.reason,
+        '加载代理配置失败',
+      )
+    }
+
+    if (storeResult.status === 'fulfilled') {
+      storeProxies.value = storeResult.value.proxies
+      storeEnabled.value = true
+    } else {
+      storeProxies.value = []
+      storeEnabled.value = false
+    }
+
+    certificates.value =
+      certificateResult.status === 'fulfilled' ? certificateResult.value : []
+  } finally {
+    if (showLoading) configLoading.value = false
+  }
+}
+
+function refreshStatusWhenVisible() {
+  if (document.visibilityState === 'visible') {
+    void loadStatus(false)
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    void loadStatus(false)
+  }
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback
+}
+
+function sourceLabel(source?: string) {
+  return source === 'store' ? '动态配置' : '配置文件'
+}
+
+function openCreate() {
+  if (!storeEnabled.value) return
+  editingProxy.value = null
+  editorVisible.value = true
+}
+
+function openEdit(proxy: ProxyDefinition) {
+  editingProxy.value = proxy
+  editorVisible.value = true
+}
+
+function openConfigCenter() {
+  void router.push('/config')
+}
+
+function openStatusDetail(record: any) {
+  const status = record as ProxyStatus
+  selectedStatus.value = status
+  selectedConfig.value = findEffectiveConfig(status.name, status.source)
+  detailVisible.value = true
+}
+
+function openConfigDetail(record: any) {
+  const config = record as ProxyConfigRow
+  selectedConfig.value = config
+  selectedStatus.value = statuses.value.find(
+    (status) => status.name === config.name,
+  )
+  detailVisible.value = true
+}
+
+function findEffectiveConfig(name: string, source?: string) {
+  const preferredSource = source === 'store' ? 'store' : 'config'
+  return (
+    configRows.value.find(
+      (config) =>
+        config.name === name && config.source === preferredSource,
+    ) ||
+    configRows.value.find(
+      (config) => config.name === name && config.source === 'store',
+    ) ||
+    configRows.value.find((config) => config.name === name)
+  )
+}
+
+async function toggle(record: ProxyConfigRow, enabled: boolean) {
+  if (!record.definition || togglingNames.value.has(record.key)) return
+  togglingNames.value.add(record.key)
+  try {
+    const block = {
+      ...getBlock(record.definition),
+      enabled,
+    }
+    const payload = {
+      name: record.definition.name,
+      type: record.definition.type,
+      [record.definition.type]: block,
+    } as ProxyDefinition
+    await legacyRequest(
+      `/api/store/proxies/${encodeURIComponent(record.definition.name)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    )
+    await Promise.all([loadConfigs(false), loadStatus(false)])
+    if (configError.value) {
+      throw new Error(`配置已保存，但重新加载失败：${configError.value}`)
+    }
+    const updated = storeProxies.value.find(
+      (proxy) => proxy.name === record.name,
+    )
+    if (!updated || isStoreProxyEnabled(updated) !== enabled) {
+      throw new Error('配置已保存，但重新加载后状态不一致')
+    }
+    Message.success(enabled ? '代理已启用' : '代理已禁用')
+  } catch (error) {
+    Message.error(errorMessage(error, '更新代理失败'))
+  } finally {
+    togglingNames.value.delete(record.key)
+  }
+}
+
+function remove(proxy: ProxyDefinition) {
+  Modal.confirm({
+    title: '删除代理',
+    content: `确认删除动态配置 ${proxy.name}？`,
+    okText: '删除',
+    okButtonProps: { status: 'danger' },
+    onOk: async () => {
+      try {
+        await legacyRequest(
+          `/api/store/proxies/${encodeURIComponent(proxy.name)}`,
+          { method: 'DELETE' },
+        )
+        await loadAll(false)
+        Message.success('代理已删除')
+      } catch (error) {
+        Message.error(errorMessage(error, '删除代理失败'))
+        throw error
+      }
+    },
   })
 }
 
-function filterStore(items: ProxyDefinition[]) {
-  const q = filters.q.toLowerCase().trim()
-  return items.filter((item) => {
-    if (filters.type && item.type !== filters.type) return false
-    if (!q) return true
-    return item.name.toLowerCase().includes(q)
-  })
+function getBlock(proxy: ProxyDefinition) {
+  return ((proxy as any)[proxy.type] || {}) as Record<string, any>
 }
 
 function certificateLabel(id?: string) {
@@ -402,105 +709,20 @@ function certificateLabel(id?: string) {
   }
   return certificate.name
 }
-
-function certificateRecord(id?: string) {
-  if (!id) return undefined
-  return certificates.value.find((item) => item.id === id)
-}
-
-function applyFilters() {
-  // Computed filters update immediately; this method provides explicit submit
-  // semantics and keyboard behavior.
-}
-
-function resetFilters() {
-  filters.q = ''
-  filters.type = ''
-  filters.status = ''
-}
-
-function openCreate() {
-  if (!storeEnabled.value) return
-  editingProxy.value = null
-  editorVisible.value = true
-}
-
-function openEdit(record: ProxyDefinition) {
-  editingProxy.value = record
-  editorVisible.value = true
-}
-
-function openDetail(record: any) {
-  selectedStatus.value = record as ProxyStatus
-  detailVisible.value = true
-}
-
-async function toggle(record: ProxyDefinition, enabled: boolean) {
-  const block = { ...getBlock(record), enabled }
-  const payload = withBlock({ name: record.name, type: record.type }, record.type, block)
-  try {
-    await legacyRequest(`/api/store/proxies/${encodeURIComponent(record.name)}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
-    Message.success(enabled ? '代理已启用' : '代理已禁用')
-    await load()
-  } catch (error) {
-    Message.error(error instanceof Error ? error.message : '更新代理失败')
-  }
-}
-
-function remove(record: ProxyDefinition) {
-  Modal.confirm({
-    title: '删除代理',
-    content: `确认删除 ${record.name}？`,
-    okText: '删除',
-    okButtonProps: { status: 'danger' },
-    onOk: async () => {
-      await legacyRequest(`/api/store/proxies/${encodeURIComponent(record.name)}`, {
-        method: 'DELETE',
-      })
-      Message.success('代理已删除')
-      await load()
-    },
-  })
-}
-
-function getBlock(record: ProxyDefinition) {
-  return ((record as any)[record.type] || {}) as Record<string, any>
-}
-
-function withBlock(
-  payload: ProxyDefinition,
-  type: string,
-  block: Record<string, any>,
-) {
-  ;(payload as any)[type] = block
-  return payload
-}
-
-function localLabel(record: ProxyDefinition) {
-  const block = getBlock(record)
-  if (block.plugin?.localAddr) return block.plugin.localAddr
-  return `${block.localIP || '127.0.0.1'}:${block.localPort || '-'}`
-}
-
-function remoteLabel(record: ProxyDefinition) {
-  const block = getBlock(record)
-  return (
-    block.remotePort ||
-    block.customDomains?.join(',') ||
-    block.subdomain ||
-    '-'
-  )
-}
-
-function pluginLabel(record: ProxyDefinition) {
-  return getBlock(record).plugin?.type || '无'
-}
 </script>
 
 <style scoped>
+.directory-toolbar {
+  align-items: flex-start;
+}
+
+.toolbar-filters {
+  display: grid;
+  width: min(100%, 680px);
+  grid-template-columns: minmax(190px, 1.4fr) repeat(3, minmax(120px, 0.75fr));
+  gap: 8px;
+}
+
 .error-text {
   display: block;
   overflow: hidden;
@@ -512,5 +734,22 @@ function pluginLabel(record: ProxyDefinition) {
 
 code {
   color: var(--frp-role-strong);
+}
+
+@media (max-width: 1100px) {
+  .directory-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar-filters {
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .toolbar-filters {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 </style>

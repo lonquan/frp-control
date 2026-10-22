@@ -14,7 +14,10 @@
 
 package model
 
-const SourceStore = "store"
+const (
+	SourceConfig = "config"
+	SourceStore  = "store"
+)
 
 // StatusResp is the response for GET /api/status
 type StatusResp map[string][]ProxyStatusResp
@@ -37,7 +40,63 @@ type ProxyListResp struct {
 	Proxies []ProxyDefinition `json:"proxies"`
 }
 
+// ProxyConfigSummary is the list view for all proxy configuration sources.
+// It intentionally omits full configuration and authentication material.
+type ProxyConfigSummary struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	Source        string `json:"source"`
+	Enabled       bool   `json:"enabled"`
+	LocalAddr     string `json:"local_addr,omitempty"`
+	RemoteAddr    string `json:"remote_addr,omitempty"`
+	Plugin        string `json:"plugin,omitempty"`
+	CertificateID string `json:"certificate_id,omitempty"`
+}
+
+type ProxyConfigListResp struct {
+	Proxies []ProxyConfigSummary `json:"proxies"`
+}
+
 // VisitorListResp is the response for GET /api/store/visitors
 type VisitorListResp struct {
 	Visitors []VisitorDefinition `json:"visitors"`
+}
+
+// VisitorConfigSummary exposes configuration metadata without SecretKey.
+type VisitorConfigSummary struct {
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Source           string `json:"source"`
+	Enabled          bool   `json:"enabled"`
+	SecretConfigured bool   `json:"secret_configured"`
+	ServerUser       string `json:"server_user,omitempty"`
+	ServerName       string `json:"server_name,omitempty"`
+	BindAddr         string `json:"bind_addr,omitempty"`
+	BindPort         int    `json:"bind_port"`
+	Plugin           string `json:"plugin,omitempty"`
+	UseEncryption    bool   `json:"use_encryption"`
+	UseCompression   bool   `json:"use_compression"`
+	XTCPProtocol     string `json:"xtcp_protocol,omitempty"`
+	KeepTunnelOpen   bool   `json:"keep_tunnel_open,omitempty"`
+	FallbackTo       string `json:"fallback_to,omitempty"`
+}
+
+type VisitorConfigListResp struct {
+	Visitors []VisitorConfigSummary `json:"visitors"`
+}
+
+type VisitorStatusResp struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Status     string `json:"status"`
+	Err        string `json:"err"`
+	BindAddr   string `json:"bind_addr"`
+	BindPort   int    `json:"bind_port"`
+	ServerUser string `json:"server_user,omitempty"`
+	ServerName string `json:"server_name,omitempty"`
+	Plugin     string `json:"plugin,omitempty"`
+}
+
+type VisitorStatusListResp struct {
+	Visitors []VisitorStatusResp `json:"visitors"`
 }

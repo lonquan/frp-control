@@ -143,6 +143,26 @@ func TestConfigSource_Load_FiltersDisabled(t *testing.T) {
 	require.Equal("enabled-visitor", visitors[0].GetBaseConfig().Name)
 }
 
+func TestConfigSource_GetAllIncludesDisabledEntries(t *testing.T) {
+	require := require.New(t)
+	src := NewConfigSource()
+	disabled := false
+
+	proxyCfg := mockProxy("disabled-proxy")
+	proxyCfg.GetBaseConfig().Enabled = &disabled
+	visitorCfg := mockVisitor("disabled-visitor")
+	visitorCfg.GetBaseConfig().Enabled = &disabled
+
+	require.NoError(src.ReplaceAll(
+		[]v1.ProxyConfigurer{proxyCfg},
+		[]v1.VisitorConfigurer{visitorCfg},
+	))
+	require.Len(src.GetAllProxies(), 1)
+	require.Len(src.GetAllVisitors(), 1)
+	require.Equal("disabled-proxy", src.GetAllProxies()[0].GetBaseConfig().Name)
+	require.Equal("disabled-visitor", src.GetAllVisitors()[0].GetBaseConfig().Name)
+}
+
 func TestConfigSource_ReplaceAll_DoesNotApplyRuntimeDefaults(t *testing.T) {
 	require := require.New(t)
 

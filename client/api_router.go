@@ -19,6 +19,7 @@ import (
 
 	adminapi "github.com/fatedier/frp/client/http"
 	"github.com/fatedier/frp/client/proxy"
+	"github.com/fatedier/frp/client/visitor"
 	httppkg "github.com/fatedier/frp/pkg/util/http"
 	netpkg "github.com/fatedier/frp/pkg/util/net"
 )
@@ -42,8 +43,11 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper) 
 		subRouter.HandleFunc("/api/reload", httppkg.MakeHTTPHandlerFunc(apiController.Reload)).Methods(http.MethodGet)
 		subRouter.HandleFunc("/api/stop", httppkg.MakeHTTPHandlerFunc(apiController.Stop)).Methods(http.MethodPost)
 		subRouter.HandleFunc("/api/status", httppkg.MakeHTTPHandlerFunc(apiController.Status)).Methods(http.MethodGet)
+		subRouter.HandleFunc("/api/visitors/status", httppkg.MakeHTTPHandlerFunc(apiController.ListVisitorStatus)).Methods(http.MethodGet)
 		subRouter.HandleFunc("/api/config", httppkg.MakeHTTPHandlerFunc(apiController.GetConfig)).Methods(http.MethodGet)
 		subRouter.HandleFunc("/api/config", httppkg.MakeHTTPHandlerFunc(apiController.PutConfig)).Methods(http.MethodPut)
+		subRouter.HandleFunc("/api/config/proxies", httppkg.MakeHTTPHandlerFunc(apiController.ListProxyConfigs)).Methods(http.MethodGet)
+		subRouter.HandleFunc("/api/config/visitors", httppkg.MakeHTTPHandlerFunc(apiController.ListVisitorConfigs)).Methods(http.MethodGet)
 		subRouter.HandleFunc("/api/proxy/{name}/config", httppkg.MakeHTTPHandlerFunc(apiController.GetProxyConfig)).Methods(http.MethodGet)
 		subRouter.HandleFunc("/api/visitor/{name}/config", httppkg.MakeHTTPHandlerFunc(apiController.GetVisitorConfig)).Methods(http.MethodGet)
 
@@ -102,4 +106,15 @@ func (svr *Service) getAllProxyStatus() []*proxy.WorkingStatus {
 		return nil
 	}
 	return ctl.pm.GetAllProxyStatus()
+}
+
+// getAllVisitorStatus returns all visitor statuses.
+func (svr *Service) getAllVisitorStatus() []*visitor.WorkingStatus {
+	svr.ctlMu.RLock()
+	ctl := svr.ctl
+	svr.ctlMu.RUnlock()
+	if ctl == nil {
+		return nil
+	}
+	return ctl.vm.GetAllVisitorStatus()
 }

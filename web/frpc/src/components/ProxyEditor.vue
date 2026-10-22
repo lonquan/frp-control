@@ -417,7 +417,7 @@
     :width="760"
   >
     <p class="example-hint">
-      示例包含当前代理类型的常用字段。保存到 Store 后，完整配置会由服务端校验。
+      示例包含当前代理类型的常用字段。保存到动态配置后，完整配置会由服务端校验。
     </p>
     <pre class="code-block">{{ currentExample }}</pre>
   </a-modal>

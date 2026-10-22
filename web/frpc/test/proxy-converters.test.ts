@@ -6,6 +6,8 @@ import {
 import {
   formToStoreProxy,
   formToStoreVisitor,
+  isStoreProxyEnabled,
+  isStoreVisitorEnabled,
   storeProxyToForm,
 } from '../src/types/proxy-converters'
 
@@ -84,6 +86,26 @@ describe('proxy converters', () => {
     expect(form.certificateId).toBe('cert-123')
     expect(form.metadatas).toEqual([{ key: 'owner', value: 'platform' }])
     expect(formToStoreProxy(form).certificateId).toBe('cert-123')
+  })
+
+  it('reads enabled from nested proxy and visitor blocks', () => {
+    const enabledProxy = { name: 'p', type: 'tcp' as const, tcp: {} }
+    const disabledProxy = {
+      name: 'p',
+      type: 'tcp' as const,
+      tcp: { enabled: false },
+    }
+    const enabledVisitor = { name: 'v', type: 'stcp' as const, stcp: {} }
+    const disabledVisitor = {
+      name: 'v',
+      type: 'stcp' as const,
+      stcp: { enabled: false },
+    }
+
+    expect(isStoreProxyEnabled(enabledProxy)).toBe(true)
+    expect(isStoreProxyEnabled(disabledProxy)).toBe(false)
+    expect(isStoreVisitorEnabled(enabledVisitor)).toBe(true)
+    expect(isStoreVisitorEnabled(disabledVisitor)).toBe(false)
   })
 
   it.each(['stcp', 'xtcp'] as const)(

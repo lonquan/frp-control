@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/fatedier/frp/client/proxy"
+	"github.com/fatedier/frp/client/visitor"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 )
 
@@ -16,6 +17,21 @@ var (
 	ErrApplyConfig     = errors.New("apply config failed")
 )
 
+const (
+	ConfigSourceFile  = "config"
+	ConfigSourceStore = "store"
+)
+
+type ProxyConfigEntry struct {
+	Config v1.ProxyConfigurer
+	Source string
+}
+
+type VisitorConfigEntry struct {
+	Config v1.VisitorConfigurer
+	Source string
+}
+
 type ConfigManager interface {
 	ReloadFromFile(strict bool) error
 
@@ -23,11 +39,14 @@ type ConfigManager interface {
 	WriteConfigFile(content []byte) error
 
 	GetProxyStatus() []*proxy.WorkingStatus
+	GetVisitorStatus() []*visitor.WorkingStatus
 	IsStoreProxyEnabled(name string) bool
 	StoreEnabled() bool
 
 	GetProxyConfig(name string) (v1.ProxyConfigurer, bool)
 	GetVisitorConfig(name string) (v1.VisitorConfigurer, bool)
+	ListProxyConfigs() ([]ProxyConfigEntry, error)
+	ListVisitorConfigs() ([]VisitorConfigEntry, error)
 
 	ListStoreProxies() ([]v1.ProxyConfigurer, error)
 	GetStoreProxy(name string) (v1.ProxyConfigurer, error)

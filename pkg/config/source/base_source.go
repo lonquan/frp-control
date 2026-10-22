@@ -77,3 +77,17 @@ func (s *baseSource) allProxies() []v1.ProxyConfigurer {
 	}
 	return cloned
 }
+
+func (s *baseSource) allVisitors() []v1.VisitorConfigurer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	visitors := make([]v1.VisitorConfigurer, 0, len(s.visitors))
+	for _, visitor := range s.visitors {
+		visitors = append(visitors, visitor)
+	}
+	_, cloned, err := cloneConfigurers(nil, visitors)
+	if err != nil {
+		return nil
+	}
+	return cloned
+}

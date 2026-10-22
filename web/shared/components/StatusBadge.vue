@@ -26,7 +26,17 @@ const state = computed(() => {
     return 'warning'
   }
   if (
-    ['error', 'failed', 'offline', 'closed', 'unavailable', 'unexpected-exit', 'expired'].includes(status)
+    [
+      'error',
+      'failed',
+      'offline',
+      'closed',
+      'start error',
+      'check failed',
+      'unavailable',
+      'unexpected-exit',
+      'expired',
+    ].includes(status)
   ) {
     return 'danger'
   }

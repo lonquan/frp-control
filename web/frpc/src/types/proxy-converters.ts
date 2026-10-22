@@ -268,6 +268,10 @@ function getStoreProxyBlock(config: ProxyDefinition): Record<string, any> {
   }
 }
 
+export function isStoreProxyEnabled(config: ProxyDefinition): boolean {
+  return getStoreProxyBlock(config).enabled !== false
+}
+
 function withStoreProxyBlock(
   payload: ProxyDefinition,
   type: ProxyType,
@@ -311,6 +315,10 @@ function getStoreVisitorBlock(config: VisitorDefinition): Record<string, any> {
     case 'xtcp':
       return config.xtcp || {}
   }
+}
+
+export function isStoreVisitorEnabled(config: VisitorDefinition): boolean {
+  return getStoreVisitorBlock(config).enabled !== false
 }
 
 function withStoreVisitorBlock(

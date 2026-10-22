@@ -58,3 +58,8 @@ func (s *ConfigSource) ReplaceAll(proxies []v1.ProxyConfigurer, visitors []v1.Vi
 func (s *ConfigSource) GetAllProxies() []v1.ProxyConfigurer {
 	return s.allProxies()
 }
+
+// GetAllVisitors returns all configured visitors, including disabled entries.
+func (s *ConfigSource) GetAllVisitors() []v1.VisitorConfigurer {
+	return s.allVisitors()
+}
