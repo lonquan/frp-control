@@ -11,7 +11,7 @@ Docker 镜像。
 
 > 本仓库不是 frp 官方发行版。生产使用前请自行完成安全评估、备份和升级演练。
 
-当前发布版本：`v0.0.2`。
+当前发布版本：`v0.0.3`。
 
 ## 主要能力
 
@@ -32,15 +32,15 @@ Docker 镜像。
 ### 1. 拉取镜像
 
 ```bash
-docker pull lonquan/frp-frps:v0.0.2
-docker pull lonquan/frp-frpc:v0.0.2
+docker pull lonquan/frp-frps:v0.0.3
+docker pull lonquan/frp-frpc:v0.0.3
 ```
 
 国内网络可以改用 DaoCloud 镜像：
 
 ```bash
-docker pull docker.m.daocloud.io/lonquan/frp-frps:v0.0.2
-docker pull docker.m.daocloud.io/lonquan/frp-frpc:v0.0.2
+docker pull docker.m.daocloud.io/lonquan/frp-frps:v0.0.3
+docker pull docker.m.daocloud.io/lonquan/frp-frpc:v0.0.3
 ```
 
 `latest` 会随正式版本移动，生产环境应固定版本。
@@ -85,7 +85,7 @@ docker run -d --name frps \
   -v "$HOME/frp/frps/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frps:v0.0.2
+  lonquan/frp-frps:v0.0.3
 ```
 
 检查状态：
@@ -125,7 +125,7 @@ docker run -d --name frpc \
   -v "$HOME/frp/frpc/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frpc:v0.0.2
+  lonquan/frp-frpc:v0.0.3
 ```
 
 ### 4. 登录面板
