@@ -87,6 +87,20 @@ const PasswordInputStub = defineComponent({
   },
 })
 
+const SelectStub = defineComponent({
+  props: {
+    modelValue: {
+      type: [String, Number, Boolean, Array],
+      default: undefined,
+    },
+    placeholder: String,
+    allowSearch: Boolean,
+  },
+  setup(_, { slots }) {
+    return () => h('div', { class: 'select-stub' }, slots.default?.())
+  },
+})
+
 const TableColumnStub = defineComponent({
   props: {
     title: String,
@@ -139,7 +153,7 @@ function mountPage() {
         'a-space': SlotStub,
         'a-input': true,
         'a-input-password': PasswordInputStub,
-        'a-select': SlotStub,
+        'a-select': SelectStub,
         'a-option': true,
         'a-tag': SlotStub,
         'a-table': TableStub,
@@ -261,5 +275,16 @@ describe('client certificates', () => {
     expect(api.saveDNSProviderConfig).toHaveBeenCalledWith('cloudflare', {
       CF_DNS_API_TOKEN: 'new-token',
     })
+  })
+
+  it('enables searching the DNS provider options', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const providerSelect = wrapper
+      .findAllComponents(SelectStub)
+      .find((select) => select.props('placeholder') === '搜索 lego DNS provider')
+
+    expect(providerSelect?.props('allowSearch')).toBe(true)
   })
 })

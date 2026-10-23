@@ -391,6 +391,22 @@ func (m *Manager) Delete(id string) error {
 	return os.Remove(filepath.Join(m.dir, id+".json"))
 }
 
+func (m *Manager) Clear() error {
+	entries, err := os.ReadDir(m.dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "settings.json" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(m.dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Manager) cleanup() error {
 	m.mu.Lock()
 	settings := m.settings

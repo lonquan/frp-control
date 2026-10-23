@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   capture: vi.fn(),
   replayCaptures: vi.fn(),
   deleteCapture: vi.fn(),
+  clearCaptures: vi.fn(),
   auditCaptureReveal: vi.fn(),
 }))
 
@@ -174,7 +175,15 @@ function mountPage() {
 describe('capture page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    ui.confirm.mockImplementation((options: { onOk?: () => unknown }) => options.onOk?.())
+    ui.confirm.mockImplementation(
+      async (options: {
+        onOk?: () => unknown
+        onBeforeOk?: () => unknown
+      }) => {
+        if (options.onBeforeOk) return await options.onBeforeOk()
+        return await options.onOk?.()
+      },
+    )
     legacy.mockResolvedValue({
       http: [{ name: 'web', type: 'http' }],
       tcp: [{ name: 'ssh', type: 'tcp' }],
@@ -237,6 +246,7 @@ describe('capture page', () => {
       },
     ])
     api.auditCaptureReveal.mockResolvedValue({ recorded: true })
+    api.clearCaptures.mockResolvedValue(undefined)
     api.saveCaptureSettings.mockImplementation(async (value) => value)
   })
 
@@ -300,6 +310,30 @@ describe('capture page', () => {
     expect(api.captures).toHaveBeenCalledOnce()
     expect(api.capture).not.toHaveBeenCalled()
     expect(wrapper.find('.drawer-stub').exists()).toBe(false)
+  })
+
+  it('clears all captures after confirmation', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    api.captures.mockClear()
+
+    const clear = wrapper
+      .findAll('button')
+      .find((button) => button.text() === '清除记录')
+    expect(clear).toBeDefined()
+    await clear!.trigger('click')
+    await flushPromises()
+
+    expect(ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '清除捕获记录',
+        okText: '清除全部',
+        okButtonProps: { status: 'danger' },
+      }),
+    )
+    expect(api.clearCaptures).toHaveBeenCalledOnce()
+    expect(api.captures).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('example.com')
   })
 
   it('refreshes only the open detail and preserves sensitive reveal state', async () => {

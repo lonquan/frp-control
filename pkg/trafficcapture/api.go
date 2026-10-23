@@ -41,7 +41,7 @@ type ReplayResponse struct {
 
 func (m *Manager) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/api/v2/captures/settings", m.handleSettings).Methods(http.MethodGet, http.MethodPut)
-	router.HandleFunc("/api/v2/captures", m.handleList).Methods(http.MethodGet)
+	router.HandleFunc("/api/v2/captures", m.handleCollection).Methods(http.MethodGet, http.MethodDelete)
 	router.HandleFunc("/api/v2/captures/{id}", m.handleDetailDelete).Methods(http.MethodGet, http.MethodDelete)
 	router.HandleFunc("/api/v2/captures/replay", m.handleReplay).Methods(http.MethodPost)
 }
@@ -58,6 +58,18 @@ func (m *Manager) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, m.Settings())
+}
+
+func (m *Manager) handleCollection(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		if err := m.Clear(); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	m.handleList(w, r)
 }
 
 func (m *Manager) handleList(w http.ResponseWriter, r *http.Request) {

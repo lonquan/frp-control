@@ -254,7 +254,7 @@
         <a-form-item label="DNS provider" required>
           <a-select
             v-model="dnsForm.provider"
-            filterable
+            allow-search
             placeholder="搜索 lego DNS provider"
             @change="changeDNSProvider"
           >

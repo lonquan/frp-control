@@ -9,6 +9,10 @@
         <template #icon><IconRefresh /></template>
         刷新列表
       </a-button>
+      <a-button status="danger" :loading="clearing" @click="confirmClear">
+        <template #icon><IconDelete /></template>
+        清除记录
+      </a-button>
     </PageHeader>
 
     <section class="panel capture-toolbar-panel">
@@ -408,6 +412,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { Message, Modal } from '@arco-design/web-vue'
 import {
+  IconDelete,
   IconFile,
   IconMore,
   IconPlayArrow,
@@ -432,6 +437,7 @@ const maxExcludePatternLength = 256
 const maxExcludeTextLength = maxExcludePatterns * (maxExcludePatternLength + 1)
 
 const loading = ref(false)
+const clearing = ref(false)
 const compactTable = useMediaQuery('(max-width: 1100px)')
 const records = ref<CaptureListItem[]>([])
 const proxyNames = ref<string[]>([])
@@ -740,6 +746,34 @@ async function remove(id: string) {
     await load()
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '删除失败')
+  }
+}
+
+function confirmClear() {
+  Modal.confirm({
+    title: '清除捕获记录',
+    content:
+      '将永久删除全部捕获记录，包括当前筛选条件之外、未显示在列表中的记录。此操作不可恢复。',
+    okText: '清除全部',
+    okButtonProps: { status: 'danger' },
+    onBeforeOk: clearAll,
+  })
+}
+
+async function clearAll() {
+  clearing.value = true
+  try {
+    await adminAPI.clearCaptures()
+    records.value = []
+    detail.value = undefined
+    detailVisible.value = false
+    Message.success('捕获记录已全部清除')
+    return true
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '清除捕获记录失败')
+    return false
+  } finally {
+    clearing.value = false
   }
 }
 

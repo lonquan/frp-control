@@ -277,6 +277,10 @@ export const adminAPI = {
     const params = new URLSearchParams(query)
     return adminRequest<CaptureListItem[]>(`/api/v2/captures?${params}`)
   },
+  clearCaptures: () =>
+    adminRequest<void>('/api/v2/captures', {
+      method: 'DELETE',
+    }),
   capture: (id: string) =>
     adminRequest<CaptureRecord>(
       `/api/v2/captures/${encodeURIComponent(id)}`,
