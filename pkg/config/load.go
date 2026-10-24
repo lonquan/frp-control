@@ -256,7 +256,7 @@ func hasConfigField(raw map[string]any, field string) bool {
 		return true
 	}
 	var current any = raw
-	for _, part := range strings.Split(field, ".") {
+	for part := range strings.SplitSeq(field, ".") {
 		values, ok := current.(map[string]any)
 		if !ok {
 			return false

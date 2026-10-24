@@ -49,7 +49,7 @@ func NewHTTPS2HTTPPlugin(pluginCtx PluginContext, options v1.ClientPluginOptions
 		},
 		nil,
 	)
-	var handler = http.Handler(rp)
+	handler := http.Handler(rp)
 	if captures := trafficcapture.GetDefault(); captures != nil {
 		handler = captures.WrapHTTPHandler(pluginCtx.Name, "https", "http", opts.LocalAddr, rp)
 	}

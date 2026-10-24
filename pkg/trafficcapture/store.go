@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -195,10 +196,10 @@ func (m *Manager) applyDefaultLimits() {
 func (m *Manager) Settings() Settings {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	copy := m.settings
-	copy.Proxies = append([]string(nil), m.settings.Proxies...)
-	copy.ExcludePatterns = append([]string(nil), m.settings.ExcludePatterns...)
-	return copy
+	snapshot := m.settings
+	snapshot.Proxies = append([]string(nil), m.settings.Proxies...)
+	snapshot.ExcludePatterns = append([]string(nil), m.settings.ExcludePatterns...)
+	return snapshot
 }
 
 func (m *Manager) SaveSettings(settings Settings) error {
@@ -237,12 +238,7 @@ func (m *Manager) Enabled(proxy string) bool {
 	if !m.settings.Enabled {
 		return false
 	}
-	for _, name := range m.settings.Proxies {
-		if name == proxy {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.settings.Proxies, proxy)
 }
 
 func (m *Manager) Limits() (maxEntryBytes, ttlSeconds int64) {
@@ -258,7 +254,10 @@ func (m *Manager) Excluded(path, rawQuery string) bool {
 	return matcher.matches(path, rawQuery)
 }
 
-func (m *Manager) Begin(proxy, protocol, scheme, target, method, host, path, query string, requestHeaders map[string][]string, requestBody []byte, truncated bool) *Capture {
+func (m *Manager) Begin(
+	proxy, protocol, scheme, target, method, host, path, query string,
+	requestHeaders map[string][]string, requestBody []byte, truncated bool,
+) *Capture {
 	capture := &Capture{
 		ID:             randomID(),
 		Proxy:          proxy,

@@ -262,7 +262,7 @@ func (m *ConfigManager) Validate(rel string, content []byte) *ConfigValidation {
 		res.Errors = []string{err.Error()}
 		return res
 	}
-	if err := cfg.ClientCommonConfig.Complete(); err != nil {
+	if err := cfg.Complete(); err != nil {
 		res.Valid = false
 		res.Errors = []string{err.Error()}
 		return res
@@ -330,7 +330,7 @@ func (m *ConfigManager) WriteFile(rel string, content []byte, expectedRevision s
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if err := atomicWrite(path, content, 0o600); err != nil {
+	if err := atomicWrite(path, content); err != nil {
 		return nil, err
 	}
 	return &ConfigFile{
@@ -364,7 +364,7 @@ func (m *ConfigManager) CreateFile(rel string, content []byte, include bool) (*C
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
 	}
-	if err := atomicWrite(path, content, 0o600); err != nil {
+	if err := atomicWrite(path, content); err != nil {
 		return nil, err
 	}
 	if include && m.role == "client" {
@@ -515,7 +515,7 @@ func (m *ConfigManager) RestoreHistory(rel, name string) (*ConfigFile, error) {
 	if readErr == nil {
 		_ = m.archiveLocked(rel, current)
 	}
-	if err := atomicWrite(path, content, 0o600); err != nil {
+	if err := atomicWrite(path, content); err != nil {
 		return nil, err
 	}
 	return &ConfigFile{
@@ -533,7 +533,7 @@ func (m *ConfigManager) archiveLocked(rel string, content []byte) error {
 		return err
 	}
 	name := time.Now().UTC().Format("20060102T150405.000000000Z") + ".toml"
-	if err := atomicWrite(filepath.Join(entryDir, name), content, 0o600); err != nil {
+	if err := atomicWrite(filepath.Join(entryDir, name), content); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(entryDir)
@@ -599,7 +599,7 @@ func (m *ConfigManager) updateMainIncludesLocked(path string, add bool) error {
 	if !res.Valid {
 		return fmt.Errorf("更新 includes 后主配置校验失败: %s", strings.Join(res.Errors, "; "))
 	}
-	return atomicWrite(m.mainPath, updated, 0o600)
+	return atomicWrite(m.mainPath, updated)
 }
 
 func (m *ConfigManager) resolve(rel string) (string, error) {
@@ -799,7 +799,7 @@ func unsafeFeatures() *security.UnsafeFeatures {
 	return security.NewUnsafeFeatures(features)
 }
 
-func atomicWrite(path string, content []byte, mode os.FileMode) error {
+func atomicWrite(path string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
@@ -809,7 +809,7 @@ func atomicWrite(path string, content []byte, mode os.FileMode) error {
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
-	if err := tmp.Chmod(mode); err != nil {
+	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -846,7 +846,7 @@ func ensureNoSymlink(root, path string) error {
 	if err != nil {
 		return err
 	}
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		if part == "" || part == "." {
 			continue
 		}

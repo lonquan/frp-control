@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -230,7 +231,7 @@ func (m *CertificateManager) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(m.statePath, b, 0o600)
+	return atomicWrite(m.statePath, b)
 }
 
 func (m *CertificateManager) RegisterRoutes(router *mux.Router) {
@@ -335,9 +336,9 @@ func (m *CertificateManager) Available() []AvailableCertificate {
 	m.mu.Lock()
 	records := make([]Certificate, 0, len(m.records))
 	for _, cert := range m.records {
-		copy := *cert
-		copy.Domains = append([]string(nil), cert.Domains...)
-		records = append(records, copy)
+		snapshot := *cert
+		snapshot.Domains = append([]string(nil), cert.Domains...)
+		records = append(records, snapshot)
 	}
 	m.mu.Unlock()
 
@@ -384,10 +385,10 @@ func (m *CertificateManager) get(id string) (*Certificate, bool) {
 	if !ok {
 		return nil, false
 	}
-	copy := *cert
-	copy.Domains = append([]string(nil), cert.Domains...)
-	m.decorateCertificateLocked(&copy)
-	return &copy, true
+	snapshot := *cert
+	snapshot.Domains = append([]string(nil), cert.Domains...)
+	m.decorateCertificateLocked(&snapshot)
+	return &snapshot, true
 }
 
 func resolveCertificateMaterial(cert *Certificate) (*CertificateMaterial, error) {
@@ -691,9 +692,7 @@ func (m *CertificateManager) renewAll() (RenewAllResult, error) {
 		result.Accepted++
 	}
 	if err := m.saveLocked(); err != nil {
-		for id, snapshot := range previous {
-			m.records[id] = snapshot
-		}
+		maps.Copy(m.records, previous)
 		m.mu.Unlock()
 		return RenewAllResult{}, err
 	}

@@ -66,3 +66,92 @@ func TestAuthenticatorRequiresBootstrapPassword(t *testing.T) {
 	_, err := NewAuthenticator(AuthOptions{DataDir: t.TempDir(), Role: "server"})
 	require.ErrorContains(t, err, "FRP_ADMIN_PASSWORD")
 }
+
+func TestNewSessionCookieAttributes(t *testing.T) {
+	tests := []struct {
+		name           string
+		target         string
+		forwardedHTTPS bool
+		secureOption   bool
+		wantSecure     bool
+	}{
+		{
+			name:       "http",
+			target:     "http://example.com/api/v2/auth/login",
+			wantSecure: false,
+		},
+		{
+			name:       "https",
+			target:     "https://example.com/api/v2/auth/login",
+			wantSecure: true,
+		},
+		{
+			name:           "forwarded https",
+			target:         "http://example.com/api/v2/auth/login",
+			forwardedHTTPS: true,
+			wantSecure:     true,
+		},
+		{
+			name:         "secure option",
+			target:       "http://example.com/api/v2/auth/login",
+			secureOption: true,
+			wantSecure:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.target, nil)
+			if test.forwardedHTTPS {
+				request.Header.Set("X-Forwarded-Proto", "HTTPS")
+			}
+			auth := &Authenticator{secure: test.secureOption}
+			recorder := httptest.NewRecorder()
+
+			auth.setSessionCookie(recorder, request, "token", time.Time{}, 3600)
+
+			cookies := recorder.Result().Cookies()
+			require.Len(t, cookies, 1)
+			cookie := cookies[0]
+			require.Equal(t, sessionCookieName, cookie.Name)
+			require.Equal(t, "token", cookie.Value)
+			require.Equal(t, "/", cookie.Path)
+			require.True(t, cookie.HttpOnly)
+			require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+			require.Equal(t, test.wantSecure, cookie.Secure)
+		})
+	}
+}
+
+func TestLogoutAndChangePasswordClearSessionCookie(t *testing.T) {
+	t.Setenv("FRP_ADMIN_PASSWORD", "test-password")
+	auth, err := NewAuthenticator(AuthOptions{DataDir: t.TempDir(), Role: "server"})
+	require.NoError(t, err)
+
+	logout := httptest.NewRequest(http.MethodPost, "https://example.com/api/v2/auth/logout", nil)
+	recorder := httptest.NewRecorder()
+	auth.Logout(recorder, logout)
+	require.Equal(t, http.StatusNoContent, recorder.Code)
+
+	changePassword := httptest.NewRequest(
+		http.MethodPost,
+		"https://example.com/api/v2/auth/password",
+		strings.NewReader(`{"currentPassword":"test-password","newPassword":"new-test-password"}`),
+	)
+	changeRecorder := httptest.NewRecorder()
+	auth.ChangePassword(changeRecorder, changePassword)
+	require.Equal(t, http.StatusOK, changeRecorder.Code)
+
+	for _, recorder := range []*httptest.ResponseRecorder{recorder, changeRecorder} {
+		cookies := recorder.Result().Cookies()
+		require.Len(t, cookies, 1)
+		cookie := cookies[0]
+		require.Equal(t, sessionCookieName, cookie.Name)
+		require.Empty(t, cookie.Value)
+		require.Equal(t, "/", cookie.Path)
+		require.True(t, cookie.HttpOnly)
+		require.True(t, cookie.Secure)
+		require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+		require.Equal(t, -1, cookie.MaxAge)
+	}
+}

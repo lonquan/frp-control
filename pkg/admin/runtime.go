@@ -367,7 +367,7 @@ func saveSettings(dataDir string, settings adminSettings) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, b, 0o600)
+	return atomicWrite(path, b)
 }
 
 var processStart = time.Now()

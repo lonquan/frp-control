@@ -18,9 +18,9 @@ import (
 	"github.com/fatedier/frp/test/e2e/framework/consts"
 )
 
-// e2eAdminClient logs in with the session-authenticated admin API and keeps
+// E2EAdminClient logs in with the session-authenticated admin API and keeps
 // its cookie jar and CSRF token for subsequent management requests.
-type e2eAdminClient struct {
+type E2EAdminClient struct {
 	address string
 	client  *http.Client
 
@@ -28,15 +28,15 @@ type e2eAdminClient struct {
 	csrf    string
 }
 
-func (f *Framework) APIClientForFrpc(port int) *e2eAdminClient {
+func (f *Framework) APIClientForFrpc(port int) *E2EAdminClient {
 	jar, _ := cookiejar.New(nil)
-	return &e2eAdminClient{
+	return &E2EAdminClient{
 		address: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
 		client:  &http.Client{Jar: jar},
 	}
 }
 
-func (c *e2eAdminClient) GetProxyStatus(ctx context.Context, name string) (*model.ProxyStatusResp, error) {
+func (c *E2EAdminClient) GetProxyStatus(ctx context.Context, name string) (*model.ProxyStatusResp, error) {
 	allStatus, err := c.GetAllProxyStatus(ctx)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (c *e2eAdminClient) GetProxyStatus(ctx context.Context, name string) (*mode
 	return nil, fmt.Errorf("no proxy status found")
 }
 
-func (c *e2eAdminClient) GetAllProxyStatus(ctx context.Context) (model.StatusResp, error) {
+func (c *E2EAdminClient) GetAllProxyStatus(ctx context.Context) (model.StatusResp, error) {
 	content, err := c.do(ctx, http.MethodGet, "/api/status", nil)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (c *e2eAdminClient) GetAllProxyStatus(ctx context.Context) (model.StatusRes
 	return status, nil
 }
 
-func (c *e2eAdminClient) Reload(ctx context.Context, strict bool) error {
+func (c *E2EAdminClient) Reload(ctx context.Context, strict bool) error {
 	query := url.Values{}
 	if strict {
 		query.Set("strictConfig", "true")
@@ -76,23 +76,23 @@ func (c *e2eAdminClient) Reload(ctx context.Context, strict bool) error {
 	return err
 }
 
-func (c *e2eAdminClient) Stop(ctx context.Context) error {
+func (c *E2EAdminClient) Stop(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/stop", nil)
 	return err
 }
 
-func (c *e2eAdminClient) GetConfig(ctx context.Context) (string, error) {
+func (c *E2EAdminClient) GetConfig(ctx context.Context) (string, error) {
 	return c.do(ctx, http.MethodGet, "/api/config", nil)
 }
 
-func (c *e2eAdminClient) UpdateConfig(ctx context.Context, content string) error {
+func (c *E2EAdminClient) UpdateConfig(ctx context.Context, content string) error {
 	_, err := c.do(ctx, http.MethodPut, "/api/config", strings.NewReader(content))
 	return err
 }
 
 // Do performs an authenticated management request and returns the raw status
 // and body so tests can assert expected error responses.
-func (c *e2eAdminClient) Do(ctx context.Context, method, path string, body []byte) (int, []byte, error) {
+func (c *E2EAdminClient) Do(ctx context.Context, method, path string, body []byte) (int, []byte, error) {
 	if err := c.ensureLogin(ctx); err != nil {
 		return 0, nil, err
 	}
@@ -118,7 +118,7 @@ func (c *e2eAdminClient) Do(ctx context.Context, method, path string, body []byt
 	return resp.StatusCode, content, nil
 }
 
-func (c *e2eAdminClient) do(ctx context.Context, method, path string, body io.Reader) (string, error) {
+func (c *E2EAdminClient) do(ctx context.Context, method, path string, body io.Reader) (string, error) {
 	var payload []byte
 	var err error
 	if body != nil {
@@ -137,7 +137,7 @@ func (c *e2eAdminClient) do(ctx context.Context, method, path string, body io.Re
 	return string(content), nil
 }
 
-func (c *e2eAdminClient) ensureLogin(ctx context.Context) error {
+func (c *E2EAdminClient) ensureLogin(ctx context.Context) error {
 	c.loginMu.Lock()
 	defer c.loginMu.Unlock()
 	if c.csrf != "" {

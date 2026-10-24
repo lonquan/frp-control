@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -222,9 +223,7 @@ func (m *CertificateManager) saveDNSProviderConfig(input saveDNSProviderRequest)
 
 	credentials := make(map[string]string)
 	if m.providerConfig.Provider == code {
-		for name, value := range m.providerConfig.Credentials {
-			credentials[name] = value
-		}
+		maps.Copy(credentials, m.providerConfig.Credentials)
 	}
 	for name, value := range input.Credentials {
 		if value != "" {
@@ -246,7 +245,7 @@ func (m *CertificateManager) saveDNSProviderConfig(input saveDNSProviderRequest)
 		return DNSProviderConfigView{}, err
 	}
 	b = append(b, '\n')
-	if err := atomicWrite(m.providerConfigPath, b, 0o600); err != nil {
+	if err := atomicWrite(m.providerConfigPath, b); err != nil {
 		return DNSProviderConfigView{}, err
 	}
 	m.providerConfig = state
@@ -310,9 +309,7 @@ func (m *CertificateManager) dnsProviderSnapshot() (dnsProviderConfigState, erro
 		Credentials: make(map[string]string, len(m.providerConfig.Credentials)),
 		UpdatedAt:   m.providerConfig.UpdatedAt,
 	}
-	for name, value := range m.providerConfig.Credentials {
-		state.Credentials[name] = value
-	}
+	maps.Copy(state.Credentials, m.providerConfig.Credentials)
 	return state, nil
 }
 
@@ -394,9 +391,8 @@ func (m *CertificateManager) helperEnvironment(credentials map[string]string) []
 }
 
 func copyStringMap(input map[string]string) map[string]string {
-	result := make(map[string]string, len(input))
-	for key, value := range input {
-		result[key] = value
+	if input == nil {
+		return map[string]string{}
 	}
-	return result
+	return maps.Clone(input)
 }

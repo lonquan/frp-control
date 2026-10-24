@@ -110,6 +110,26 @@ func NewAuthenticator(opts AuthOptions) (*Authenticator, error) {
 	return a, nil
 }
 
+func (a *Authenticator) setSessionCookie(
+	w http.ResponseWriter,
+	r *http.Request,
+	value string,
+	expires time.Time,
+	maxAge int,
+) {
+	// Secure is request-dependent so plain HTTP remains supported for local deployments.
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec
+		Name:     sessionCookieName,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   a.secure || r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expires,
+		MaxAge:   maxAge,
+	})
+}
+
 func (a *Authenticator) Role() string {
 	return a.role
 }
@@ -218,16 +238,7 @@ func (a *Authenticator) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   a.secure || r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
-		SameSite: http.SameSiteLaxMode,
-		Expires:  session.ExpiresAt,
-		MaxAge:   int(a.ttl.Seconds()),
-	})
+	a.setSessionCookie(w, r, token, session.ExpiresAt, int(a.ttl.Seconds()))
 	writeJSON(w, http.StatusOK, SessionResponse{
 		Username:  username,
 		Role:      a.role,
@@ -265,14 +276,7 @@ func (a *Authenticator) Logout(w http.ResponseWriter, r *http.Request) {
 		_ = a.saveLocked()
 		a.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	a.setSessionCookie(w, r, "", time.Time{}, -1)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -313,14 +317,7 @@ func (a *Authenticator) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "保存密码失败")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	a.setSessionCookie(w, r, "", time.Time{}, -1)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "密码已更新，请重新登录"})
 }
 
@@ -362,8 +359,8 @@ func (a *Authenticator) sessionFromRequest(r *http.Request) (*Session, bool) {
 		session.ExpiresAt = now.Add(a.ttl)
 		_ = a.saveLocked()
 	}
-	copy := *session
-	return &copy, true
+	snapshot := *session
+	return &snapshot, true
 }
 
 func (a *Authenticator) UsernameFromRequest(r *http.Request) string {

@@ -441,7 +441,7 @@ func writeCertificatePairBytes(certPath, keyPath string, certPEM, keyPEM []byte)
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
 		return err
 	}
 	return os.WriteFile(keyPath, keyPEM, 0o600)

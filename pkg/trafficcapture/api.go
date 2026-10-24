@@ -57,7 +57,7 @@ func (m *Manager) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, m.Settings())
+	writeJSON(w, m.Settings())
 }
 
 func (m *Manager) handleCollection(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +84,7 @@ func (m *Manager) handleList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, items)
 }
 
 func (m *Manager) handleDetailDelete(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func (m *Manager) handleDetailDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, capture)
+	writeJSON(w, capture)
 }
 
 func (m *Manager) handleReplay(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,7 @@ func (m *Manager) handleReplay(w http.ResponseWriter, r *http.Request) {
 		body.Concurrency = 10
 	}
 	results := m.replay(body)
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(w, results)
 }
 
 func (m *Manager) replay(body replayRequest) []ReplayResponse {
@@ -133,10 +133,7 @@ func (m *Manager) replay(body replayRequest) []ReplayResponse {
 	results := make([]ReplayResponse, len(body.IDs))
 	var wg sync.WaitGroup
 	for index, id := range body.IDs {
-		index, id := index, id
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 			if body.IntervalMS > 0 {
@@ -156,7 +153,7 @@ func (m *Manager) replay(body replayRequest) []ReplayResponse {
 				_ = atomicWrite(filepath.Join(m.dir, id+".json"), b, 0o600)
 			}
 			results[index] = ReplayResponse{ID: id, Result: result}
-		}()
+		})
 	}
 	wg.Wait()
 	return results
@@ -248,12 +245,12 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	return nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, data any) {
+func writeJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"code": status,
-		"msg":  http.StatusText(status),
+		"code": http.StatusOK,
+		"msg":  http.StatusText(http.StatusOK),
 		"data": data,
 	})
 }

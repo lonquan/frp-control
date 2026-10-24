@@ -24,6 +24,8 @@ import (
 
 const maxWebSocketFrames = 2000
 
+var httpVersionPrefix = []byte("HTTP/")
+
 type webSocketCaptureConn struct {
 	net.Conn
 	capture      *Capture
@@ -80,13 +82,13 @@ type wsParser struct {
 func (p *wsParser) Feed(data []byte) {
 	p.buffer = append(p.buffer, data...)
 	if p.direction == "server" && !p.httpUpgrade {
-		if len(p.buffer) >= 5 && string(p.buffer[:5]) == "HTTP/" {
+		if len(p.buffer) >= len(httpVersionPrefix) {
 			p.httpUpgrade = true
-		} else if !bytes.HasPrefix([]byte("HTTP/"), p.buffer) {
+		} else if !bytes.Equal(p.buffer, httpVersionPrefix[:len(p.buffer)]) {
 			p.httpUpgrade = true
 		}
 	}
-	if p.direction == "server" && p.httpUpgrade && len(p.buffer) >= 5 && string(p.buffer[:5]) == "HTTP/" {
+	if p.direction == "server" && p.httpUpgrade && bytes.HasPrefix(p.buffer, httpVersionPrefix) {
 		if index := bytes.Index(p.buffer, []byte("\r\n\r\n")); index >= 0 {
 			p.buffer = p.buffer[index+4:]
 			p.httpUpgrade = false

@@ -127,9 +127,7 @@ func (w *captureResponseWriter) Write(data []byte) (int, error) {
 	}
 	if int64(w.body.Len()) < w.maxBodyBytes {
 		remaining := w.maxBodyBytes - int64(w.body.Len())
-		if remaining > int64(len(data)) {
-			remaining = int64(len(data))
-		}
+		remaining = min(remaining, int64(len(data)))
 		_, _ = w.body.Write(data[:remaining])
 		if remaining < int64(len(data)) {
 			w.truncated = true

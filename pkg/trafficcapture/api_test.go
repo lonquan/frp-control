@@ -22,7 +22,7 @@ func TestCaptureCollectionDeleteClearsAllRecords(t *testing.T) {
 		MaxTotalBytes: 4096,
 	}))
 
-	var captureIDs []string
+	captureIDs := make([]string, 0, 2)
 	for _, host := range []string{"one.example.com", "two.example.com"} {
 		capture := manager.Begin("web", "http", "http", "127.0.0.1:8080", "GET", host, "/", "", nil, nil, false)
 		require.NoError(t, manager.Complete(capture))
