@@ -184,9 +184,23 @@ describe('capture page', () => {
         return await options.onOk?.()
       },
     )
-    legacy.mockResolvedValue({
-      http: [{ name: 'web', type: 'http' }],
-      tcp: [{ name: 'ssh', type: 'tcp' }],
+    legacy.mockImplementation(async (path: string) => {
+      if (path === '/api/status') {
+        return {
+          http: [{ name: 'web', type: 'http' }],
+          tcp: [{ name: 'ssh', type: 'tcp' }],
+        }
+      }
+      if (path === '/api/config/proxies') {
+        return {
+          proxies: [
+            { name: 'web', type: 'http' },
+            { name: 'disabled-web', type: 'https' },
+            { name: 'ssh', type: 'tcp' },
+          ],
+        }
+      }
+      throw new Error(`unexpected request: ${path}`)
     })
     api.captureSettings.mockResolvedValue({
       enabled: true,
@@ -292,6 +306,30 @@ describe('capture page', () => {
       }),
     )
     expect(wrapper.find('.drawer-stub').exists()).toBe(false)
+  })
+
+  it('removes deleted proxies from capture settings and options', async () => {
+    api.captureSettings.mockResolvedValue({
+      enabled: true,
+      proxies: ['web', 'deleted-web'],
+      excludePatterns: [],
+      ttlSeconds: 86400,
+      maxEntryBytes: 16 * 1024 * 1024,
+      maxTotalBytes: 500 * 1024 * 1024,
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 个代理')
+    const configure = wrapper
+      .findAll('button')
+      .find((button) => button.text() === '配置')
+    await configure!.trigger('click')
+
+    const settings = wrapper.get('.drawer-stub').text()
+    expect(settings).toContain('web')
+    expect(settings).toContain('disabled-web')
+    expect(settings).not.toContain('deleted-web')
   })
 
   it('refreshes only the list after replaying from a row action', async () => {

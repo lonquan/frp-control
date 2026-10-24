@@ -361,6 +361,40 @@ func TestBuildProxyStatusRespRunningWithErrorKeepsRemoteAddr(t *testing.T) {
 	}
 }
 
+func TestProxyResponsesUsePluginLocalAddr(t *testing.T) {
+	const localAddr = "host.docker.internal:8000"
+	cfg := &v1.HTTPSProxyConfig{
+		ProxyBaseConfig: v1.ProxyBaseConfig{
+			Name: "https",
+			Type: "https",
+			ProxyBackend: v1.ProxyBackend{
+				Plugin: v1.TypedClientPluginOptions{
+					Type: v1.PluginHTTPS2HTTP,
+					ClientPluginOptions: &v1.HTTPS2HTTPPluginOptions{
+						LocalAddr: localAddr,
+					},
+				},
+			},
+		},
+	}
+	controller := &Controller{serverAddr: "frps.example.com", manager: &fakeConfigManager{}}
+
+	statusResp := controller.buildProxyStatusResp(&proxy.WorkingStatus{
+		Name:       "https",
+		Type:       "https",
+		Phase:      proxy.ProxyPhaseRunning,
+		RemoteAddr: "frps.example.com:443",
+		Cfg:        cfg,
+	})
+	require.Equal(t, localAddr, statusResp.LocalAddr)
+
+	configResp := controller.buildProxyConfigSummary(configmgmt.ProxyConfigEntry{
+		Config: cfg,
+		Source: configmgmt.ConfigSourceFile,
+	})
+	require.Equal(t, localAddr, configResp.LocalAddr)
+}
+
 func TestReloadErrorMapping(t *testing.T) {
 	tests := []struct {
 		name         string

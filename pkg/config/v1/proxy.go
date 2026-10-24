@@ -16,8 +16,10 @@ package v1
 
 import (
 	"maps"
+	"net"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"github.com/fatedier/frp/pkg/config/types"
 	"github.com/fatedier/frp/pkg/msg"
@@ -158,6 +160,46 @@ func (c *ProxyBaseConfig) Complete() {
 	if c.Plugin.ClientPluginOptions != nil {
 		c.Plugin.Complete()
 	}
+}
+
+// LocalServiceAddr returns the backend address used by the proxy. Plugins that
+// forward to a local service store their target outside LocalIP/LocalPort.
+func (c *ProxyBaseConfig) LocalServiceAddr() string {
+	if c == nil {
+		return ""
+	}
+	switch options := c.Plugin.ClientPluginOptions.(type) {
+	case *HTTP2HTTPSPluginOptions:
+		if options == nil {
+			return ""
+		}
+		return options.LocalAddr
+	case *HTTP2HTTPPluginOptions:
+		if options == nil {
+			return ""
+		}
+		return options.LocalAddr
+	case *HTTPS2HTTPPluginOptions:
+		if options == nil {
+			return ""
+		}
+		return options.LocalAddr
+	case *HTTPS2HTTPSPluginOptions:
+		if options == nil {
+			return ""
+		}
+		return options.LocalAddr
+	case *TLS2RawPluginOptions:
+		if options == nil {
+			return ""
+		}
+		return options.LocalAddr
+	}
+	if c.LocalPort == 0 {
+		return ""
+	}
+	host := util.EmptyOr(c.LocalIP, "127.0.0.1")
+	return net.JoinHostPort(host, strconv.Itoa(c.LocalPort))
 }
 
 func (c *ProxyBaseConfig) MarshalToMsg(m *msg.NewProxy) {

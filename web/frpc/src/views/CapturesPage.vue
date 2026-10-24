@@ -450,6 +450,7 @@ const replayingID = ref('')
 const settingsVisible = ref(false)
 const settingsSaving = ref(false)
 const settings = ref<CaptureSettings>(emptySettings())
+const proxyInventoryLoaded = ref(false)
 const settingsDraft = reactive({
   enabled: false,
   proxies: [] as string[],
@@ -473,6 +474,7 @@ const settingsDirty = computed(() => {
 
 onMounted(async () => {
   await Promise.all([loadProxies(), loadSettings(), load()])
+  reconcileCaptureProxies()
 })
 
 function emptySettings(): CaptureSettings {
@@ -487,30 +489,53 @@ function emptySettings(): CaptureSettings {
 }
 
 async function loadProxies() {
-  try {
-    const status = await legacyRequest<Record<string, Array<{ name: string; type: string }>>>(
+  const [statusResult, configResult] = await Promise.allSettled([
+    legacyRequest<Record<string, Array<{ name: string; type: string }>>>(
       '/api/status',
-    )
-    const names = Object.values(status)
-      .flat()
-      .filter((proxy) => ['http', 'https'].includes(proxy.type))
-      .map((proxy) => proxy.name)
-    proxyNames.value = [...new Set([...names, ...settings.value.proxies])].sort()
-  } catch {
-    proxyNames.value = [...settings.value.proxies]
+    ),
+    legacyRequest<{
+      proxies: Array<{ name: string; type: string }>
+    }>('/api/config/proxies'),
+  ])
+  const names = new Set<string>()
+  if (statusResult.status === 'fulfilled') {
+    for (const proxy of Object.values(statusResult.value).flat()) {
+      if (['http', 'https'].includes(proxy.type)) names.add(proxy.name)
+    }
   }
+  if (configResult.status === 'fulfilled') {
+    for (const proxy of configResult.value.proxies || []) {
+      if (['http', 'https'].includes(proxy.type)) names.add(proxy.name)
+    }
+  }
+  proxyNames.value = [...names].sort()
+  proxyInventoryLoaded.value = configResult.status === 'fulfilled'
 }
 
 async function loadSettings() {
   try {
     const value = await adminAPI.captureSettings()
     settings.value = normalizeSettings(value)
-    proxyNames.value = [...new Set([...proxyNames.value, ...settings.value.proxies])].sort()
     if (!settingsVisible.value) {
       resetSettingsDraft()
     }
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '读取捕获设置失败')
+  }
+}
+
+function reconcileCaptureProxies() {
+  if (!proxyInventoryLoaded.value) return
+  const available = new Set(proxyNames.value)
+  const proxies = settings.value.proxies.filter((proxy) => available.has(proxy))
+  if (!sameStringArray(proxies, settings.value.proxies)) {
+    settings.value = { ...settings.value, proxies }
+  }
+  const draftProxies = settingsDraft.proxies.filter((proxy) =>
+    available.has(proxy),
+  )
+  if (!sameStringArray(draftProxies, settingsDraft.proxies)) {
+    settingsDraft.proxies = draftProxies
   }
 }
 
@@ -556,8 +581,12 @@ function parseExcludeText(text: string) {
 
 function buildDraftSettings(validate: boolean): CaptureSettings {
   const excludePatterns = parseExcludeText(settingsDraft.excludeText)
+  const available = new Set(proxyNames.value)
+  const proxies = proxyInventoryLoaded.value
+    ? settingsDraft.proxies.filter((proxy) => available.has(proxy))
+    : [...settingsDraft.proxies]
   if (validate) {
-    if (settingsDraft.enabled && settingsDraft.proxies.length === 0) {
+    if (settingsDraft.enabled && proxies.length === 0) {
       throw new Error('启用捕获时至少选择一个代理')
     }
     if (excludePatterns.length > maxExcludePatterns) {
@@ -569,7 +598,7 @@ function buildDraftSettings(validate: boolean): CaptureSettings {
   }
   return {
     enabled: settingsDraft.enabled,
-    proxies: [...settingsDraft.proxies],
+    proxies,
     excludePatterns,
     ttlSeconds: Math.max(1, Number(settingsDraft.ttlHours || 24)) * 3600,
     maxEntryBytes:

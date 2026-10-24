@@ -295,9 +295,7 @@ func (c *Controller) buildProxyStatusResp(status *proxy.WorkingStatus) model.Pro
 	}
 	baseCfg := status.Cfg.GetBaseConfig()
 	psr.CertificateID = baseCfg.Metadatas[v1.CertificateIDMetadataKey]
-	if baseCfg.LocalPort != 0 {
-		psr.LocalAddr = net.JoinHostPort(baseCfg.LocalIP, strconv.Itoa(baseCfg.LocalPort))
-	}
+	psr.LocalAddr = baseCfg.LocalServiceAddr()
 	psr.Plugin = baseCfg.Plugin.Type
 
 	if status.Err == "" || status.Phase == proxy.ProxyPhaseRunning {
@@ -323,9 +321,7 @@ func (c *Controller) buildProxyConfigSummary(entry configmgmt.ProxyConfigEntry) 
 		Plugin:        base.Plugin.Type,
 		CertificateID: base.Metadatas[v1.CertificateIDMetadataKey],
 	}
-	if base.LocalPort != 0 {
-		summary.LocalAddr = net.JoinHostPort(base.LocalIP, strconv.Itoa(base.LocalPort))
-	}
+	summary.LocalAddr = base.LocalServiceAddr()
 
 	switch cfg := entry.Config.(type) {
 	case *v1.TCPProxyConfig:
