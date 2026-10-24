@@ -35,12 +35,18 @@ import (
 	"github.com/go-acme/lego/v5/acme"
 	"github.com/go-acme/lego/v5/certcrypto"
 	"github.com/go-acme/lego/v5/certificate"
+	"github.com/go-acme/lego/v5/challenge"
+	"github.com/go-acme/lego/v5/challenge/dns01"
 	"github.com/go-acme/lego/v5/lego"
 	"github.com/go-acme/lego/v5/providers/dns"
 	"github.com/go-acme/lego/v5/registration"
 )
 
-const defaultCA = "https://acme-v02.api.letsencrypt.org/directory"
+const (
+	defaultCA                     = "https://acme-v02.api.letsencrypt.org/directory"
+	minimumDNSPropagationTimeout  = 120 * time.Second
+	minimumDNSPropagationInterval = dns01.DefaultPollingInterval
+)
 
 type job struct {
 	Email       string            `json:"email"`
@@ -129,7 +135,12 @@ func run(jobPath string) error {
 	if err != nil {
 		return fmt.Errorf("create DNS provider %q: %w", request.Provider, err)
 	}
-	if err := client.Challenge.SetDNS01Provider(provider); err != nil {
+	provider = wrapDNSProviderTimeout(provider)
+	// Authoritative nameservers are the source of truth for TXT propagation.
+	if err := client.Challenge.SetDNS01Provider(
+		provider,
+		dns01.DisableRecursiveNSsPropagationRequirement(),
+	); err != nil {
 		return err
 	}
 
@@ -160,6 +171,58 @@ func run(jobPath string) error {
 		return err
 	}
 	return nil
+}
+
+type dnsProviderTimeout struct {
+	challenge.Provider
+	timeout  time.Duration
+	interval time.Duration
+}
+
+func (p *dnsProviderTimeout) Timeout() (time.Duration, time.Duration) {
+	return p.timeout, p.interval
+}
+
+type sequentialDNSProviderTimeout struct {
+	*dnsProviderTimeout
+	sequentialInterval time.Duration
+}
+
+func (p *sequentialDNSProviderTimeout) Sequential() time.Duration {
+	return p.sequentialInterval
+}
+
+type sequentialDNSProvider interface {
+	Sequential() time.Duration
+}
+
+// wrapDNSProviderTimeout enforces a minimum propagation window without
+// shortening a provider's existing timeout or changing its sequencing mode.
+func wrapDNSProviderTimeout(provider challenge.Provider) challenge.Provider {
+	timeout := minimumDNSPropagationTimeout
+	interval := minimumDNSPropagationInterval
+	if timedProvider, ok := provider.(challenge.ProviderTimeout); ok {
+		providerTimeout, providerInterval := timedProvider.Timeout()
+		if providerTimeout > timeout {
+			timeout = providerTimeout
+		}
+		if providerInterval > interval {
+			interval = providerInterval
+		}
+	}
+
+	wrapped := &dnsProviderTimeout{
+		Provider: provider,
+		timeout:  timeout,
+		interval: interval,
+	}
+	if provider, ok := provider.(sequentialDNSProvider); ok {
+		return &sequentialDNSProviderTimeout{
+			dnsProviderTimeout: wrapped,
+			sequentialInterval: provider.Sequential(),
+		}
+	}
+	return wrapped
 }
 
 func validateProvider(path string) error {

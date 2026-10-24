@@ -11,8 +11,6 @@ Docker 镜像。
 
 > 本仓库不是 frp 官方发行版。生产使用前请自行完成安全评估、备份和升级演练。
 
-当前发布版本：`v0.0.3`。
-
 ## 主要能力
 
 - 提供 `lonquan/frp-frps` 和 `lonquan/frp-frpc`，支持 Linux amd64/arm64。
@@ -32,18 +30,9 @@ Docker 镜像。
 ### 1. 拉取镜像
 
 ```bash
-docker pull lonquan/frp-frps:v0.0.3
-docker pull lonquan/frp-frpc:v0.0.3
+docker pull lonquan/frp-frps
+docker pull lonquan/frp-frpc
 ```
-
-国内网络可以改用 DaoCloud 镜像：
-
-```bash
-docker pull docker.m.daocloud.io/lonquan/frp-frps:v0.0.3
-docker pull docker.m.daocloud.io/lonquan/frp-frpc:v0.0.3
-```
-
-`latest` 会随正式版本移动，生产环境应固定版本。
 
 ### 2. 启动 frps
 
@@ -85,7 +74,7 @@ docker run -d --name frps \
   -v "$HOME/frp/frps/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frps:v0.0.3
+  lonquan/frp-frps
 ```
 
 检查状态：
@@ -125,7 +114,7 @@ docker run -d --name frpc \
   -v "$HOME/frp/frpc/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frpc:v0.0.3
+  lonquan/frp-frpc
 ```
 
 ### 4. 登录面板
@@ -257,8 +246,8 @@ make web-ci
 make build
 ```
 
-推送 `v*` Git 标签会触发 Docker Hub 发布工作流，构建 amd64/arm64 镜像。发布
-工作流需要仓库 Secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`。
+发布工作流会构建 amd64/arm64 镜像并推送到 Docker Hub，需要仓库 Secrets：
+`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`。
 
 ## 兼容性
 
@@ -268,7 +257,7 @@ make build
   `enablePrometheus` 已移除。
 - 上游代理类型和主要数据面协议保持兼容，但旧版管理 API 和 CLI 管理命令不再
   适用。
-- 升级前备份 `config`、`data`，并固定 Docker 镜像版本。
+- 升级前备份 `config`、`data`，并为现有容器保留回滚方案。
 
 ## 相关文档
 

@@ -1,13 +1,119 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/go-acme/lego/v5/challenge"
 	"github.com/stretchr/testify/require"
 )
+
+type testDNSProvider struct{}
+
+func (p *testDNSProvider) Present(context.Context, string, string, string) error {
+	return nil
+}
+
+func (p *testDNSProvider) CleanUp(context.Context, string, string, string) error {
+	return nil
+}
+
+type testTimeoutDNSProvider struct {
+	*testDNSProvider
+	timeout  time.Duration
+	interval time.Duration
+}
+
+func (p *testTimeoutDNSProvider) Timeout() (time.Duration, time.Duration) {
+	return p.timeout, p.interval
+}
+
+type testSequentialDNSProvider struct {
+	*testDNSProvider
+	sequentialInterval time.Duration
+}
+
+func (p *testSequentialDNSProvider) Sequential() time.Duration {
+	return p.sequentialInterval
+}
+
+func TestWrapDNSProviderTimeout(t *testing.T) {
+	tests := []struct {
+		name             string
+		provider         challenge.Provider
+		expectedTimeout  time.Duration
+		expectedInterval time.Duration
+	}{
+		{
+			name:             "provider without timeout",
+			provider:         &testDNSProvider{},
+			expectedTimeout:  minimumDNSPropagationTimeout,
+			expectedInterval: minimumDNSPropagationInterval,
+		},
+		{
+			name: "short provider timeout",
+			provider: &testTimeoutDNSProvider{
+				testDNSProvider: &testDNSProvider{},
+				timeout:         60 * time.Second,
+				interval:        5 * time.Second,
+			},
+			expectedTimeout:  minimumDNSPropagationTimeout,
+			expectedInterval: 5 * time.Second,
+		},
+		{
+			name: "short provider polling interval",
+			provider: &testTimeoutDNSProvider{
+				testDNSProvider: &testDNSProvider{},
+				timeout:         60 * time.Second,
+				interval:        time.Second,
+			},
+			expectedTimeout:  minimumDNSPropagationTimeout,
+			expectedInterval: minimumDNSPropagationInterval,
+		},
+		{
+			name: "long provider timeout",
+			provider: &testTimeoutDNSProvider{
+				testDNSProvider: &testDNSProvider{},
+				timeout:         3 * time.Minute,
+				interval:        7 * time.Second,
+			},
+			expectedTimeout:  3 * time.Minute,
+			expectedInterval: 7 * time.Second,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := wrapDNSProviderTimeout(test.provider)
+			timedProvider, ok := provider.(challenge.ProviderTimeout)
+			require.True(t, ok)
+			timeout, interval := timedProvider.Timeout()
+			require.Equal(t, test.expectedTimeout, timeout)
+			require.Equal(t, test.expectedInterval, interval)
+		})
+	}
+}
+
+func TestWrapDNSProviderTimeoutPreservesSequential(t *testing.T) {
+	provider := wrapDNSProviderTimeout(&testSequentialDNSProvider{
+		testDNSProvider:    &testDNSProvider{},
+		sequentialInterval: 9 * time.Second,
+	})
+
+	sequentialProvider, ok := provider.(sequentialDNSProvider)
+	require.True(t, ok)
+	require.Equal(t, 9*time.Second, sequentialProvider.Sequential())
+}
+
+func TestWrapDNSProviderTimeoutDoesNotAddSequential(t *testing.T) {
+	provider := wrapDNSProviderTimeout(&testDNSProvider{})
+	_, ok := provider.(sequentialDNSProvider)
+	require.False(t, ok)
+}
 
 func TestValidateJobRequiresDNSProvider(t *testing.T) {
 	err := validateJob(job{

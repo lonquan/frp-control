@@ -12,32 +12,18 @@
 - `lonquan/frp-frps`
 - `lonquan/frp-frpc`
 
-推荐直接拉取固定版本 `v0.0.2` 并通过 `docker run` 启动。支持 Docker Desktop
-的 Linux 容器，不支持原生 Windows 容器。
+推荐直接拉取镜像并通过 `docker run` 启动。支持 Docker Desktop 的 Linux
+容器，不支持原生 Windows 容器。
 
 前端由 Dockerfile 内的 Node.js 多阶段构建生成，不要求宿主机安装 Node.js，
 也不依赖本地 `web/*/dist`。只有修改源码或自行发布镜像时才需要克隆仓库并构建。
 
 ## 从 Docker Hub 直接运行（推荐）
 
-镜像分发版本与内置 frp 上游版本独立演进。当前文档示例版本为 `v0.0.2`，
-`latest` 会随正式版本移动，生产环境应固定版本。
-
 ```bash
-docker pull lonquan/frp-frps:v0.0.2
-docker pull lonquan/frp-frpc:v0.0.2
+docker pull lonquan/frp-frps
+docker pull lonquan/frp-frpc
 ```
-
-版本查看：
-
-```bash
-docker run --rm --entrypoint /usr/bin/frps \
-  lonquan/frp-frps:v0.0.2 --version
-docker run --rm --entrypoint /usr/bin/frpc \
-  lonquan/frp-frpc:v0.0.2 --version
-```
-
-输出格式为 `0.0.2 (frp 0.71.1)`。
 
 ### 启动 frps
 
@@ -68,7 +54,7 @@ docker run -d --name frps \
   -v "$HOME/frp/frps/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frps:v0.0.2
+  lonquan/frp-frps
 ```
 
 Linux 以外的 Docker Desktop 环境通常不需要 `chown`。如果系统没有 `sudo` 或
@@ -102,7 +88,7 @@ docker run -d --name frpc \
   -v "$HOME/frp/frpc/data:/var/lib/frp" \
   --log-opt max-size=20m \
   --log-opt max-file=5 \
-  lonquan/frp-frpc:v0.0.2
+  lonquan/frp-frpc
 ```
 
 ### Docker secrets
