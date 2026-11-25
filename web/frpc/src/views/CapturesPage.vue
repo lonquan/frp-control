@@ -1034,10 +1034,6 @@ function formatDate(value?: string) {
 }
 
 .capture-detail-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   border: 1px solid var(--frp-border);
   border-radius: 12px;
   padding: 14px;
@@ -1047,6 +1043,7 @@ function formatDate(value?: string) {
 .capture-url {
   display: flex;
   min-width: 0;
+  margin-bottom: 12px;
   align-items: center;
   gap: 9px;
 }
@@ -1191,11 +1188,6 @@ function formatDate(value?: string) {
 
   .capture-meta {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .capture-detail-summary {
-    align-items: flex-start;
-    flex-direction: column;
   }
 }
 
